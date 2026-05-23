@@ -1,0 +1,28 @@
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude / AI assistants
+.claude/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data backups (any file starting with "data - " inside raw_data)
+raw_data/data - *.xlsx
+raw_data/data - *.csv
