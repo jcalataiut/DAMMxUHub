@@ -24,6 +24,7 @@ from ga_optimizer import (
     OptimizerContext,
     baseline_individual,
     breakdown,
+    changeover_hours,
     evolve,
     load_clean_context,
     schedule_to_gantt,
@@ -85,25 +86,49 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     pos = nx.spring_layout(G, seed=42, k=0.85, iterations=80)
     max_deg = max(node_df["degree"].max(), 1)
 
-    # Edges: normal + black spots
-    all_xs, all_ys = [], []
-    bs_xs, bs_ys = [], []
+    # Edge width by changeover time
+    has_weight = "weight" in edge_df.columns
+    if has_weight and len(edge_df) > 1:
+        wmin, wmax = edge_df["weight"].min(), edge_df["weight"].max()
+        wr = max(wmax - wmin, 0.01)
+    else:
+        has_weight = False
+
+    # Edges (normal + black spots) with weighted width
+    edge_xs, edge_ys = [], []
+    edge_w, edge_c, edge_a = [], [], []
+    edge_pair, edge_weight_label = [], []
     for _, row in edge_df.iterrows():
         o, d = row["prev_sku"], row["next_sku"]
         if o not in pos or d not in pos:
             continue
-        xs, ys = [pos[o][0], pos[d][0]], [pos[o][1], pos[d][1]]
-        if (o, d) in black_spots:
-            bs_xs.append(xs); bs_ys.append(ys)
+        edge_xs.append([pos[o][0], pos[d][0]])
+        edge_ys.append([pos[o][1], pos[d][1]])
+        is_bs = (o, d) in black_spots
+        edge_c.append("#d62728" if is_bs else "#444444")
+        if has_weight:
+            w = float(row["weight"])
+            wt = (w - wmin) / wr
+            edge_w.append(max(0.3, 0.3 + wt * 3.7))
+            edge_weight_label.append(f"{w:.2f}h")
         else:
-            all_xs.append(xs); all_ys.append(ys)
+            edge_w.append(2.5 if is_bs else 0.8)
+            edge_weight_label.append("")
+        edge_a.append(0.8 if is_bs else 0.25 + (edge_w[-1] / 4.0) * 0.5)
+        edge_pair.append(f"{o} → {d}")
 
-    if all_xs:
-        src = ColumnDataSource(dict(xs=all_xs, ys=all_ys))
-        p.multi_line("xs", "ys", source=src, line_color="#8892A0", line_width=1, line_alpha=0.4)
-    if bs_xs:
-        src_bs = ColumnDataSource(dict(xs=bs_xs, ys=bs_ys))
-        p.multi_line("xs", "ys", source=src_bs, line_color="#d62728", line_width=2.5, line_alpha=0.8)
+    if edge_xs:
+        src_e = ColumnDataSource(dict(
+            xs=edge_xs, ys=edge_ys, w=edge_w, c=edge_c, a=edge_a,
+            pair=edge_pair, weight=edge_weight_label,
+        ))
+        r_e = p.multi_line("xs", "ys", source=src_e,
+                           line_color="c", line_width="w", line_alpha="a",
+                           line_join="round")
+        p.add_tools(HoverTool(renderers=[r_e], tooltips=[
+            ("Transición", "@pair"),
+            ("Cambio", "@weight"),
+        ]))
 
     # Path edges
     if path_edges:
@@ -323,7 +348,8 @@ if page == "Aprendizaje 2025":
     c1, c2, c3 = st.columns(3)
     for idx, line in enumerate(LINES):
         with [c1, c2, c3][idx]:
-            ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)]
+            ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)].copy()
+            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["week"] == week_idx) & (nodes_2025["line"] == line)]
             fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True)
             components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
@@ -410,8 +436,9 @@ else:
     for idx, line in enumerate(LINES):
         with [cg1, cg2, cg3][idx]:
             skus_l = set(opt_ind.get(line, []) + base_ind.get(line, []))
-            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)]
+            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
             ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
+            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
             nf = nf[nf["sku"].isin(skus_l)]
             fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []))
