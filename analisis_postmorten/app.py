@@ -15,8 +15,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
+from bokeh.embed import file_html
 from bokeh.models import Arrow, ColumnDataSource, HoverTool, LabelSet, NormalHead
 from bokeh.plotting import figure
+from bokeh.resources import INLINE
 
 try:
     import networkx as nx
@@ -282,6 +285,463 @@ def heatmap(matrix: pd.DataFrame, title: str) -> go.Figure:
     return fig
 
 
+def hours_decomposition_figure(summary: pd.DataFrame, hours: Dict[str, float]) -> go.Figure:
+    ordered_scenarios = [
+        s
+        for s in ["Plan empresa", "Produccion real", "Plan AI sobre real", "Plan AI sobre plan"]
+        if s in set(summary["scenario"])
+    ]
+    rows = []
+    for line in LINES:
+        for scenario in ordered_scenarios:
+            item = summary[(summary["line"] == line) & (summary["scenario"] == scenario)]
+            if item.empty:
+                continue
+            row = item.iloc[0].to_dict()
+            row["label"] = f"L{line} · {scenario}"
+            row["overload_h"] = max(0.0, float(row["total_h"]) - hours[line])
+            row["slack_h"] = max(0.0, hours[line] - float(row["total_h"]))
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    fig = go.Figure()
+    if df.empty:
+        return fig
+
+    trace_defs = [
+        ("Tiempo ideal produccion", "prod_h", "#4C78A8"),
+        ("Impacto cambios grafo", "transition_h", "#F58518"),
+        ("Holgura", "slack_h", "#C7E5CF"),
+        ("Sobrecarga", "overload_h", "#E45756"),
+    ]
+    for name, col, color in trace_defs:
+        fig.add_trace(
+            go.Bar(
+                name=name,
+                x=df["label"],
+                y=df[col],
+                marker_color=color,
+                hovertemplate=f"%{{x}}<br>{name}: %{{y:.1f}} h<extra></extra>",
+                text=[f"{value:.0f}h" if value >= 4 else "" for value in df[col]],
+                textposition="inside",
+            )
+        )
+
+    for idx, row in df.iterrows():
+        fig.add_annotation(
+            x=row["label"],
+            y=float(row["total_h"]) + max(3.0, 0.025 * df["total_h"].max()),
+            text=f"{float(row['total_h']):.1f}h",
+            showarrow=False,
+            font=dict(size=10, color="#344054"),
+        )
+
+    fig.update_layout(
+        barmode="stack",
+        height=460,
+        margin=dict(l=50, r=20, t=40, b=95),
+        yaxis_title="Horas",
+        xaxis_title="",
+        legend=dict(orientation="h", y=1.12),
+        plot_bgcolor="white",
+    )
+    fig.update_xaxes(tickangle=-35)
+    fig.update_yaxes(gridcolor="#E6E8EB")
+    return fig
+
+
+def scenario_sequences(scenarios: Dict, line: str) -> Dict[str, List[str]]:
+    sequences: Dict[str, List[str]] = {}
+    for key in ["company_plan", "real_production", "ai_plan"]:
+        scenario = scenarios.get(key, {})
+        name = scenario.get("scenario", key)
+        seq = scenario.get("line_results", {}).get(line, {}).get("seq", [])
+        if seq:
+            sequences[name] = list(seq)
+    return sequences
+
+
+def scenario_by_name(scenarios: Dict, name: str) -> Dict:
+    for key in ["company_plan", "real_production", "ai_plan"]:
+        scenario = scenarios.get(key, {})
+        if scenario.get("scenario") == name:
+            return scenario
+    return {}
+
+
+def black_spot_edges(raw_matrices: Dict, line: str) -> pd.DataFrame:
+    raw = raw_matrices.get(line, {}).get("_raw", pd.DataFrame()).copy()
+    if raw.empty or "oee_degradation" not in raw or "count" not in raw:
+        return pd.DataFrame()
+    raw = raw[raw["count"] >= 2].copy()
+    if raw.empty:
+        return pd.DataFrame()
+    sigma = raw["oee_degradation"].std()
+    if pd.isna(sigma):
+        sigma = 0.0
+    threshold = raw["oee_degradation"].mean() + 1.5 * sigma
+    return raw[raw["oee_degradation"] > threshold].copy()
+
+
+def scale01(values: pd.Series) -> pd.Series:
+    values = pd.to_numeric(values, errors="coerce").fillna(0.0)
+    min_v = float(values.min()) if len(values) else 0.0
+    max_v = float(values.max()) if len(values) else 0.0
+    if max_v <= min_v:
+        return pd.Series(np.zeros(len(values)), index=values.index)
+    return (values - min_v) / (max_v - min_v)
+
+
+def learned_node_table(
+    context: Dict,
+    scenarios: Dict,
+    line: str,
+    *,
+    critical_top_n: int = 8,
+) -> pd.DataFrame:
+    seqs = scenario_sequences(scenarios, line)
+    nodes = sorted({sku for seq in seqs.values() for sku in seq})
+    if not nodes or line not in context["matrices"]:
+        return pd.DataFrame()
+
+    matrix = context["matrices"][line]["changeover_h"].reindex(index=nodes, columns=nodes)
+    matrix = matrix.astype(float)
+    for sku in nodes:
+        if sku in matrix.index and sku in matrix.columns:
+            matrix.loc[sku, sku] = np.nan
+
+    counts = context["raw_matrices"].get(line, {}).get("count", pd.DataFrame())
+    counts = counts.reindex(index=nodes, columns=nodes).fillna(0) if not counts.empty else pd.DataFrame(0, index=nodes, columns=nodes)
+    black_edges = black_spot_edges(context["raw_matrices"], line)
+    black_nodes = set()
+    if not black_edges.empty:
+        black_nodes = set(black_edges["sku_prev"].astype(str)).union(set(black_edges["sku"].astype(str)))
+
+    model = context["matrices"][line].get("model")
+    rows = []
+    for sku in nodes:
+        props = model.get_or_create_sku_properties(sku) if model is not None else {}
+        memberships = [name for name, seq in seqs.items() if sku in seq]
+        direct_in = float(counts[sku].sum()) if sku in counts.columns else 0.0
+        direct_out = float(counts.loc[sku].sum()) if sku in counts.index else 0.0
+        rows.append(
+            {
+                "sku": sku,
+                "format": props.get("format", "unknown"),
+                "scenarios": " | ".join(memberships),
+                "avg_in_h": float(matrix[sku].mean()) if sku in matrix.columns else 0.0,
+                "avg_out_h": float(matrix.loc[sku].mean()) if sku in matrix.index else 0.0,
+                "max_in_h": float(matrix[sku].max()) if sku in matrix.columns else 0.0,
+                "max_out_h": float(matrix.loc[sku].max()) if sku in matrix.index else 0.0,
+                "direct_in_count_2025": direct_in,
+                "direct_out_count_2025": direct_out,
+                "black_spot": sku in black_nodes,
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    risk_avg = df["avg_in_h"].fillna(0) + df["avg_out_h"].fillna(0)
+    risk_max = df["max_in_h"].fillna(0) + df["max_out_h"].fillna(0)
+    direct_count = np.log1p(df["direct_in_count_2025"].fillna(0) + df["direct_out_count_2025"].fillna(0))
+    df["critical_score"] = (
+        0.50 * scale01(risk_avg)
+        + 0.30 * scale01(risk_max)
+        + 0.20 * scale01(direct_count)
+    )
+    df.loc[df["black_spot"], "critical_score"] = np.maximum(df.loc[df["black_spot"], "critical_score"], 0.92)
+    df["critical_rank"] = df["critical_score"].rank(method="first", ascending=False).astype(int)
+    df["critical"] = df["black_spot"] | (df["critical_rank"] <= critical_top_n)
+    df["critical_reason"] = np.where(
+        df["black_spot"],
+        "Black spot 2025",
+        np.where(df["critical"], "Alta centralidad/coste", "Normal"),
+    )
+    return df.sort_values(["critical", "critical_score"], ascending=[False, False]).reset_index(drop=True)
+
+
+def learned_edge_tables(
+    context: Dict,
+    scenarios: Dict,
+    line: str,
+    graph_scenario: str,
+    *,
+    max_background_edges: int = 70,
+    edge_mode: str = "Cambios de riesgo",
+    critical_top_n: int = 8,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    node_df = learned_node_table(context, scenarios, line, critical_top_n=critical_top_n)
+    if node_df.empty:
+        return node_df, pd.DataFrame(), pd.DataFrame()
+
+    nodes = node_df["sku"].tolist()
+    matrix = context["matrices"][line]["changeover_h"].reindex(index=nodes, columns=nodes).astype(float)
+    counts = context["raw_matrices"].get(line, {}).get("count", pd.DataFrame())
+    counts = counts.reindex(index=nodes, columns=nodes).fillna(0) if not counts.empty else pd.DataFrame(0, index=nodes, columns=nodes)
+
+    rows = []
+    for origin in nodes:
+        for destination in nodes:
+            if origin == destination:
+                continue
+            value = matrix.loc[origin, destination]
+            if pd.isna(value) or value <= 0:
+                continue
+            rows.append(
+                {
+                    "origin": origin,
+                    "destination": destination,
+                    "learned_changeover_h": float(value),
+                    "direct_count_2025": int(counts.loc[origin, destination]) if origin in counts.index and destination in counts.columns else 0,
+                    "kind": "aprendido",
+                }
+            )
+    background = pd.DataFrame(rows)
+    if not background.empty:
+        if edge_mode == "Mejores cambios":
+            background = background.nsmallest(max_background_edges, "learned_changeover_h")
+        else:
+            background = background.nlargest(max_background_edges, "learned_changeover_h")
+
+    scenario_edges = []
+    scenario = scenario_by_name(scenarios, graph_scenario)
+    seq = scenario.get("line_results", {}).get(line, {}).get("seq", [])
+    edge_hours = scenario.get("line_results", {}).get(line, {}).get("edge_hours", pd.DataFrame())
+    for pos, (origin, destination) in enumerate(zip(seq, seq[1:]), start=1):
+        learned_h = (
+            float(matrix.loc[origin, destination])
+            if origin in matrix.index and destination in matrix.columns and pd.notna(matrix.loc[origin, destination])
+            else np.nan
+        )
+        edge_h = (
+            float(edge_hours.loc[origin, destination])
+            if isinstance(edge_hours, pd.DataFrame)
+            and origin in edge_hours.index
+            and destination in edge_hours.columns
+            and pd.notna(edge_hours.loc[origin, destination])
+            else learned_h
+        )
+        direct_count = (
+            int(counts.loc[origin, destination])
+            if origin in counts.index and destination in counts.columns
+            else 0
+        )
+        scenario_edges.append(
+            {
+                "position": pos,
+                "origin": origin,
+                "destination": destination,
+                "learned_changeover_h": learned_h,
+                "scenario_transition_h": edge_h,
+                "direct_count_2025": direct_count,
+                "kind": graph_scenario,
+            }
+        )
+
+    return node_df, background.reset_index(drop=True), pd.DataFrame(scenario_edges)
+
+
+def bokeh_learned_graph(
+    context: Dict,
+    scenarios: Dict,
+    line: str,
+    graph_scenario: str,
+    *,
+    max_background_edges: int = 70,
+    edge_mode: str = "Cambios de riesgo",
+    critical_top_n: int = 8,
+):
+    node_df, background, scenario_edges = learned_edge_tables(
+        context,
+        scenarios,
+        line,
+        graph_scenario,
+        max_background_edges=max_background_edges,
+        edge_mode=edge_mode,
+        critical_top_n=critical_top_n,
+    )
+
+    p = figure(
+        title=f"L{line} · grafo aprendido 2025",
+        width=920,
+        height=620,
+        x_axis_type=None,
+        y_axis_type=None,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_scroll="wheel_zoom",
+        background_fill_color="#FAFBFC",
+        border_fill_color="white",
+    )
+    p.grid.visible = False
+    if node_df.empty:
+        return p, node_df, background, scenario_edges
+    if nx is None:
+        return p, node_df, background, scenario_edges
+
+    graph = nx.DiGraph()
+    for sku in node_df["sku"]:
+        graph.add_node(sku)
+    layout_edges = pd.concat(
+        [
+            background[["origin", "destination", "learned_changeover_h"]] if not background.empty else pd.DataFrame(),
+            scenario_edges[["origin", "destination", "learned_changeover_h"]] if not scenario_edges.empty else pd.DataFrame(),
+        ],
+        ignore_index=True,
+    )
+    if not layout_edges.empty and {"origin", "destination"}.issubset(layout_edges.columns):
+        for _, row in layout_edges.dropna(subset=["origin", "destination"]).iterrows():
+            learned_value = pd.to_numeric(row.get("learned_changeover_h", 1.0), errors="coerce")
+            if pd.isna(learned_value) or learned_value < 0:
+                learned_value = 1.0
+            graph.add_edge(row["origin"], row["destination"], weight=1.0 / (1.0 + float(learned_value)))
+
+    if graph.number_of_edges() > 0:
+        pos = nx.spring_layout(graph, seed=42, k=0.85, iterations=140, weight="weight")
+    else:
+        pos = nx.circular_layout(graph)
+
+    def edge_source(df: pd.DataFrame, value_col: str = "learned_changeover_h") -> ColumnDataSource:
+        if df.empty:
+            return ColumnDataSource({"xs": [], "ys": [], "origin": [], "destination": [], "hours": [], "count": []})
+        xs, ys = [], []
+        for _, edge in df.iterrows():
+            origin, destination = edge["origin"], edge["destination"]
+            xs.append([pos[origin][0], pos[destination][0]])
+            ys.append([pos[origin][1], pos[destination][1]])
+        values = pd.to_numeric(df[value_col], errors="coerce").fillna(df["learned_changeover_h"]).fillna(0.0)
+        return ColumnDataSource(
+            {
+                "xs": xs,
+                "ys": ys,
+                "origin": df["origin"].tolist(),
+                "destination": df["destination"].tolist(),
+                "hours": [f"{v:.2f}" for v in values],
+                "count": df.get("direct_count_2025", pd.Series([0] * len(df))).astype(int).tolist(),
+            }
+        )
+
+    bg_src = edge_source(background)
+    bg_renderer = p.multi_line(
+        "xs",
+        "ys",
+        source=bg_src,
+        line_width=1.2,
+        line_alpha=0.18,
+        line_color="#667085",
+    )
+
+    scenario_color = SCENARIO_COLORS.get(graph_scenario, "#54A24B")
+    sc_src = edge_source(scenario_edges, value_col="scenario_transition_h")
+    sc_renderer = p.multi_line(
+        "xs",
+        "ys",
+        source=sc_src,
+        line_width=4.0,
+        line_alpha=0.92,
+        line_color=scenario_color,
+    )
+    for _, edge in scenario_edges.iterrows():
+        origin, destination = edge["origin"], edge["destination"]
+        if origin not in pos or destination not in pos:
+            continue
+        p.add_layout(
+            Arrow(
+                end=NormalHead(size=10, fill_color=scenario_color, line_color=scenario_color),
+                x_start=pos[origin][0],
+                y_start=pos[origin][1],
+                x_end=pos[destination][0],
+                y_end=pos[destination][1],
+                line_color=scenario_color,
+                line_width=2.0,
+                line_alpha=0.65,
+            )
+        )
+
+    scenario_nodes = set(scenario_edges["origin"]).union(set(scenario_edges["destination"])) if not scenario_edges.empty else set()
+    node_plot = node_df.copy()
+    node_plot["x"] = [pos[sku][0] for sku in node_plot["sku"]]
+    node_plot["y"] = [pos[sku][1] for sku in node_plot["sku"]]
+    node_plot["score_label"] = node_plot["critical_score"].map(lambda v: f"{v:.3f}")
+    node_plot["avg_in_label"] = node_plot["avg_in_h"].map(lambda v: f"{v:.2f}")
+    node_plot["avg_out_label"] = node_plot["avg_out_h"].map(lambda v: f"{v:.2f}")
+    node_plot["direct_count"] = (node_plot["direct_in_count_2025"] + node_plot["direct_out_count_2025"]).astype(int)
+    node_plot["in_selected_path"] = node_plot["sku"].isin(scenario_nodes)
+    node_plot["size"] = 11 + 28 * node_plot["critical_score"].clip(0, 1)
+    node_plot["fill_color"] = np.select(
+        [
+            node_plot["black_spot"],
+            node_plot["critical"],
+            node_plot["in_selected_path"],
+        ],
+        ["#D62728", "#F58518", scenario_color],
+        default="#4C78A8",
+    )
+    node_plot["line_color"] = np.where(node_plot["critical"], "#101828", "white")
+    node_plot["alpha"] = np.where(node_plot["in_selected_path"] | node_plot["critical"], 0.96, 0.74)
+    node_plot["label"] = np.where(node_plot["critical"], node_plot["sku"], "")
+
+    node_src = ColumnDataSource(node_plot)
+    node_renderer = p.circle(
+        "x",
+        "y",
+        source=node_src,
+        size="size",
+        fill_color="fill_color",
+        fill_alpha="alpha",
+        line_color="line_color",
+        line_width=1.4,
+    )
+    labels = LabelSet(
+        x="x",
+        y="y",
+        text="label",
+        source=node_src,
+        x_offset=8,
+        y_offset=5,
+        text_font_size="8pt",
+        text_color="#101828",
+        text_font_style="bold",
+    )
+    p.add_layout(labels)
+
+    p.add_tools(
+        HoverTool(
+            renderers=[node_renderer],
+            tooltips=[
+                ("SKU", "@sku"),
+                ("Estado", "@critical_reason"),
+                ("Formato", "@format"),
+                ("Score critico", "@score_label"),
+                ("Cambio medio entrada", "@avg_in_label h"),
+                ("Cambio medio salida", "@avg_out_label h"),
+                ("Transiciones directas 2025", "@direct_count"),
+                ("Escenarios", "@scenarios"),
+            ],
+        ),
+        HoverTool(
+            renderers=[bg_renderer],
+            tooltips=[
+                ("Arista aprendida", "@origin -> @destination"),
+                ("Cambio aprendido", "@hours h"),
+                ("Veces directas 2025", "@count"),
+            ],
+        ),
+        HoverTool(
+            renderers=[sc_renderer],
+            tooltips=[
+                ("Secuencia", "@origin -> @destination"),
+                ("Horas transicion", "@hours h"),
+                ("Veces directas 2025", "@count"),
+            ],
+        ),
+    )
+    return p, node_df, background, scenario_edges
+
+
+def render_bokeh_chart(fig, *, height: int = 660) -> None:
+    html = file_html(fig, INLINE, fig.title.text or "Bokeh graph")
+    components.html(html, height=height, scrolling=False)
+
+
 default_data_dir = str(ROOT / "OPERACIONS")
 
 with st.sidebar:
@@ -302,6 +762,11 @@ with st.sidebar:
         options=["real", "plan"],
         format_func=lambda v: "Produccion real" if v == "real" else "Plan empresa",
         horizontal=False,
+    )
+    fixed_original_lines = st.checkbox(
+        "Mantener linea original",
+        value=True,
+        help="Si se desactiva, la AI puede mover SKUs entre lineas elegibles por formato e historico 2025.",
     )
     time_limit = st.slider("Tiempo solver", min_value=5, max_value=60, value=20, step=5)
 
@@ -357,6 +822,7 @@ scenarios = cached_scenarios(
     time_limit,
     use_learned_changeover,
     ai_demand_source,
+    fixed_original_lines,
     urgent_json,
 )
 summary = scenarios["summary"].copy()
@@ -382,6 +848,7 @@ with tab_overview:
     c4.metric("Ahorro vs real", f"{saved_vs_real:+.1f} h" if pd.notna(saved_vs_real) else "n/a")
 
     st.plotly_chart(hours_bar(summary, hours), width="stretch")
+    st.plotly_chart(hours_decomposition_figure(summary, hours), width="stretch")
     st.plotly_chart(gantt_figure(blocks, selected_line, hours), width="stretch")
 
     st.subheader("Resumen por linea")
@@ -408,6 +875,80 @@ with tab_overview:
         st.plotly_chart(status_bar(comparison["by_sku"]), width="stretch")
 
 with tab_graph:
+    st.subheader("Grafo aprendido Bokeh")
+    seq_options = list(scenario_sequences(scenarios, selected_line).keys())
+    graph_options = ["Solo aprendido"] + seq_options
+    default_graph = ai_name if ai_name in graph_options else (seq_options[-1] if seq_options else "Solo aprendido")
+    graph_scenario = st.selectbox(
+        "Secuencia marcada sobre el grafo",
+        graph_options,
+        index=graph_options.index(default_graph),
+    )
+    graph_cols = st.columns([1, 1, 1])
+    with graph_cols[0]:
+        edge_mode = st.radio(
+            "Aristas aprendidas",
+            ["Cambios de riesgo", "Mejores cambios"],
+            horizontal=True,
+        )
+    with graph_cols[1]:
+        max_background_edges = st.slider("Numero de aristas", min_value=20, max_value=160, value=70, step=10)
+    with graph_cols[2]:
+        critical_top_n = st.slider("Nodos criticos", min_value=3, max_value=18, value=8, step=1)
+
+    graph_fig, node_df, background_edges, scenario_edges = bokeh_learned_graph(
+        context,
+        scenarios,
+        selected_line,
+        graph_scenario,
+        max_background_edges=max_background_edges,
+        edge_mode=edge_mode,
+        critical_top_n=critical_top_n,
+    )
+    render_bokeh_chart(graph_fig)
+    st.caption(
+        "Rojo = black spot historico 2025; naranja = nodo critico por coste/centralidad; "
+        "verde o color de escenario = SKU usado en la secuencia marcada. Las aristas grises son el grafo aprendido; "
+        "las aristas gruesas indican la secuencia seleccionada."
+    )
+
+    left_graph, right_graph = st.columns([1.05, 1])
+    with left_graph:
+        st.subheader("Nodos criticos")
+        if node_df.empty:
+            st.info("Sin nodos para esta linea y configuracion.")
+        else:
+            node_show = node_df[
+                [
+                    "sku",
+                    "format",
+                    "critical_reason",
+                    "critical_score",
+                    "avg_in_h",
+                    "avg_out_h",
+                    "direct_in_count_2025",
+                    "direct_out_count_2025",
+                    "scenarios",
+                ]
+            ].copy()
+            st.dataframe(node_show.round(3).head(18), width="stretch", hide_index=True)
+    with right_graph:
+        st.subheader("Aristas de secuencia")
+        if scenario_edges.empty:
+            st.info("Selecciona un escenario para ver el camino cronologico.")
+        else:
+            edge_show = scenario_edges[
+                [
+                    "position",
+                    "origin",
+                    "destination",
+                    "learned_changeover_h",
+                    "scenario_transition_h",
+                    "direct_count_2025",
+                ]
+            ].copy()
+            st.dataframe(edge_show.round(3), width="stretch", hide_index=True, height=360)
+
     st.subheader("Cobertura del grafo aprendido")
     coverage = graph_coverage_table(context["raw_matrices"], context["matrices"], context["all_skus"])
     coverage["direct_coverage_pct"] = (coverage["direct_coverage_pct"] * 100).round(2)
