@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import colorsys
 import json
 import time
 from pathlib import Path
@@ -12,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from bokeh.embed import file_html
-from bokeh.models import ColumnDataSource, HoverTool, LabelSet
+from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 from bokeh.resources import INLINE
 
@@ -58,8 +59,11 @@ def load_frames_2025():
 
 
 def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
-                      title="", path_edges=None, active_sku=None):
-    """Build a Bokeh directed graph for a line."""
+                      title="", path_edges=None, active_sku=None,
+                      heatmap=False):
+    """Build a Bokeh directed graph for a line.
+    If heatmap=True, nodes are colored from cold (low degree) → hot (high degree).
+    """
     G = nx.DiGraph()
     for _, row in node_df.iterrows():
         G.add_node(row["sku"])
@@ -112,7 +116,14 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             p_src = ColumnDataSource(dict(xs=pxs, ys=pys))
             p.multi_line("xs", "ys", source=p_src, line_color="#2ca02c", line_width=4, line_alpha=0.9)
 
-    # Nodes
+    # Heatmap color range (degree cold → hot)
+    if heatmap and "degree" in node_df.columns and len(node_df) > 1:
+        dmin = node_df["degree"].min()
+        dmax = node_df["degree"].max()
+        drange = max(dmax - dmin, 1)
+    else:
+        heatmap = False
+
     node_x, node_y, node_s, node_c, node_al = [], [], [], [], []
     spot_skus = set(p for pair in black_spots for p in pair)
     for _, row in node_df.iterrows():
@@ -127,6 +138,11 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             node_c.append("#ff7f0e")
         elif s in spot_skus:
             node_c.append("#d62728")
+        elif heatmap:
+            t = (row["degree"] - dmin) / drange
+            h = 240 - t * 240
+            r, g, b = colorsys.hsv_to_rgb(h / 360, 0.85, 0.92)
+            node_c.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
         else:
             node_c.append("#4C78A8")
         node_al.append(0.95 if s == active_sku else 0.85)
@@ -135,15 +151,10 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
         src_n = ColumnDataSource(dict(
             x=node_x, y=node_y, size=node_s, color=node_c, alpha=node_al,
             sku=node_df["sku"].tolist(), degree=node_df["degree"].tolist(),
-            label=[s if sz > 22 else "" for s, sz in zip(node_df["sku"].tolist(), node_s)],
         ))
         r = p.scatter("x", "y", source=src_n, size="size",
                        fill_color="color", fill_alpha="alpha",
                        line_color="white", line_width=1.5)
-        labels = LabelSet(x="x", y="y", text="label", source=src_n,
-                          x_offset=6, y_offset=4, text_font_size="8pt",
-                          text_color="#101828", text_font_style="bold")
-        p.add_layout(labels)
         p.add_tools(HoverTool(renderers=[r], tooltips=[
             ("SKU", "@sku"), ("Conexiones", "@degree"),
         ]))
@@ -288,7 +299,7 @@ if page == "Aprendizaje 2025":
 
     # ── Streamlit animation: state at top, advance at bottom after render ──
     if "week_2025" not in st.session_state:
-        st.session_state.week_2025 = 1
+        st.session_state.week_2025 = num_weeks
     if "playing_2025" not in st.session_state:
         st.session_state.playing_2025 = False
 
@@ -296,8 +307,9 @@ if page == "Aprendizaje 2025":
     with col_play:
         btn_label = "⏸" if st.session_state.playing_2025 else "▶"
         if st.button(btn_label, key="play_btn_25"):
-            st.session_state.playing_2025 = not st.session_state.playing_2025
-            if st.session_state.week_2025 >= num_weeks:
+            was_playing = st.session_state.playing_2025
+            st.session_state.playing_2025 = not was_playing
+            if not was_playing:
                 st.session_state.week_2025 = 1
             st.rerun()
     with col_week:
@@ -313,7 +325,7 @@ if page == "Aprendizaje 2025":
         with [c1, c2, c3][idx]:
             ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)]
             nf = nodes_2025[(nodes_2025["week"] == week_idx) & (nodes_2025["line"] == line)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}")
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True)
             components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
 
     mc1, mc2, mc3 = st.columns(3)
@@ -335,15 +347,15 @@ else:
     st.title("Optimización · 18-22 May 2026")
     st.caption("Elige optimizador, añade urgencias, visualiza el plan.")
 
-    algo = st.sidebar.selectbox("Algoritmo", ["GA (Genético)", "Optuna (Bayesiano)"], key="algo")
+    algo = st.sidebar.selectbox("Algoritmo", ["GA (Genético)", "SA (Enfriamiento simulado)"], key="algo")
     with st.sidebar:
         if algo == "GA (Genético)":
             ga_pop = st.slider("Población", 20, 200, 60, 10, key="ga_pop")
             ga_gen = st.slider("Generaciones", 30, 400, 150, 10, key="ga_gen")
-            ga_seed = st.number_input("Seed", 42, step=1, key="ga_seed")
+            ga_seed = st.number_input("Seed GA", 42, step=1, key="ga_seed")
         else:
-            opt_trials = st.slider("Trials", 50, 1000, 300, 50, key="opt_trials")
-            opt_seed = st.number_input("Seed", 42, step=1, key="opt_seed")
+            sa_iter = st.slider("Iteraciones", 2_000, 50_000, 15_000, 1_000, key="sa_iter")
+            sa_seed = st.number_input("Seed SA", 42, step=1, key="sa_seed")
 
     run_btn = st.sidebar.button("▶ Optimizar", type="primary", use_container_width=True, key="run_opt")
 
@@ -356,8 +368,8 @@ else:
                 "active": st.column_config.CheckboxColumn("Activa"),
                 "sku": st.column_config.SelectboxColumn("SKU", options=ctx.skus, required=False),
                 "linea": st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
-                "hl_total": st.column_config.NumberColumn("HL extra", min=0.0, step=25.0),
-                "latest_position": st.column_config.NumberColumn("Posición", min=0, step=1),
+                "hl_total": st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
+                "latest_position": st.column_config.NumberColumn("Posición", min_value=0, step=1),
             },
         )
         urgent_orders = clean_urgent(urgent_df) if not urgent_df.empty else []
@@ -372,9 +384,9 @@ else:
             best_ind, history = evolve(ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
             st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0}
         else:
-            def cb(n, v, f):
-                progress.progress(n/opt_trials, text=f"Trial {n}/{opt_trials}" + (f" · {v:.1f}h" if f else ""))
-            res = run_study(ctx, n_trials=opt_trials, seed=opt_seed, on_trial=cb)
+            def cb(n, best, _):
+                progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
+            res = run_sa(ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
             st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"]}
         progress.empty()
 
