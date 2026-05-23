@@ -61,9 +61,10 @@ def load_frames_2025():
 
 def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
                       title="", path_edges=None, active_sku=None,
-                      heatmap=False):
+                      heatmap=False, pos=None):
     """Build a Bokeh directed graph for a line.
     If heatmap=True, nodes are colored from cold (low degree) → hot (high degree).
+    If pos provided, use fixed positions; otherwise compute with spring_layout.
     """
     G = nx.DiGraph()
     for _, row in node_df.iterrows():
@@ -83,7 +84,11 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     if G.number_of_nodes() == 0:
         return p
 
-    pos = nx.spring_layout(G, seed=42, k=0.85, iterations=80)
+    if pos is None:
+        pos = nx.spring_layout(G, seed=42, k=0.85, iterations=80)
+    else:
+        # Use only positions for nodes present in this graph
+        pos = {s: pos[s] for s in G.nodes() if s in pos}
     max_deg = max(node_df["degree"].max(), 1)
 
     # Edge width by changeover time
@@ -315,6 +320,25 @@ num_weeks = int(frames_2025["week"].max())
 spot_set = set(zip(spots_2025["prev_sku"], spots_2025["next_sku"]))
 spot_skus_set = set(p for pair in spot_set for p in pair)
 
+
+@st.cache_resource(show_spinner="Calculando layout fijo…")
+def get_global_positions():
+    """Fixed node positions per line using all weeks (avoids chaotic jumping)."""
+    positions = {}
+    for line in LINES:
+        ef = frames_2025[frames_2025["line"] == line]
+        G = nx.DiGraph()
+        for _, row in ef.iterrows():
+            G.add_edge(row["prev_sku"], row["next_sku"])
+        if G.number_of_nodes() == 0:
+            continue
+        pos = nx.spring_layout(G, seed=42, k=0.85, iterations=80)
+        positions[line] = pos
+    return positions
+
+
+global_pos = get_global_positions()
+
 page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026"], label_visibility="collapsed")
 
 # ═══════════════════════ PAGE 1: 2025 ═══════════════════════
@@ -351,7 +375,8 @@ if page == "Aprendizaje 2025":
             ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)].copy()
             ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["week"] == week_idx) & (nodes_2025["line"] == line)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True)
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True,
+                                    pos=global_pos.get(line))
             components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
 
     mc1, mc2, mc3 = st.columns(3)
@@ -441,7 +466,8 @@ else:
             ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
             nf = nf[nf["sku"].isin(skus_l)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []))
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []),
+                                    pos=global_pos.get(line))
             components.html(file_html(fig, INLINE, ""), height=400, scrolling=False)
 
     # Animated Gantt
