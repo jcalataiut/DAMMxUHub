@@ -15,6 +15,13 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from bokeh.models import Arrow, ColumnDataSource, HoverTool, LabelSet, NormalHead
+from bokeh.plotting import figure
+
+try:
+    import networkx as nx
+except ImportError:  # pragma: no cover - networkx is in requirements
+    nx = None
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -85,6 +92,7 @@ def cached_scenarios(
     time_limit: int,
     use_learned_changeover: bool,
     ai_demand_source: str,
+    fixed_original_lines: bool,
     urgent_json: str,
 ) -> Dict:
     context = cached_context(data_dir, start_date, end_date)
@@ -97,6 +105,7 @@ def cached_scenarios(
         urgent_orders=urgent_orders,
         use_learned_changeover=use_learned_changeover,
         ai_demand_source=ai_demand_source,
+        fixed_original_lines=fixed_original_lines,
     )
 
 
@@ -323,7 +332,7 @@ with tab_urgent:
     urgent_df = st.data_editor(
         default_orders,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         column_config={
             "active": st.column_config.CheckboxColumn("Activa"),
             "sku": st.column_config.SelectboxColumn("SKU", options=all_skus, required=False),
@@ -334,7 +343,7 @@ with tab_urgent:
     )
     urgent_orders = clean_urgent_orders(urgent_df)
     if urgent_orders:
-        st.dataframe(pd.DataFrame(urgent_orders), use_container_width=True)
+        st.dataframe(pd.DataFrame(urgent_orders), width="stretch")
     else:
         st.info("Sin urgencias activas.")
 
@@ -372,14 +381,14 @@ with tab_overview:
     c3.metric("Plan AI", f"{ai_m['total_h']:.1f} h" if pd.notna(ai_m["total_h"]) else "n/a", f"{ai_m['hl_total']:,.0f} HL" if pd.notna(ai_m["hl_total"]) else "")
     c4.metric("Ahorro vs real", f"{saved_vs_real:+.1f} h" if pd.notna(saved_vs_real) else "n/a")
 
-    st.plotly_chart(hours_bar(summary, hours), use_container_width=True)
-    st.plotly_chart(gantt_figure(blocks, selected_line, hours), use_container_width=True)
+    st.plotly_chart(hours_bar(summary, hours), width="stretch")
+    st.plotly_chart(gantt_figure(blocks, selected_line, hours), width="stretch")
 
     st.subheader("Resumen por linea")
     display_summary = summary.copy()
     for col in ["hl_total", "prod_h", "transition_h", "total_h", "spare_h"]:
         display_summary[col] = display_summary[col].round(2)
-    st.dataframe(display_summary, use_container_width=True, hide_index=True)
+    st.dataframe(display_summary, width="stretch", hide_index=True)
 
     comparison = context["comparison"]
     left, right = st.columns([1.1, 1])
@@ -390,19 +399,19 @@ with tab_overview:
         sku_df = sku_df.sort_values("abs_delta_hl", ascending=False)
         st.dataframe(
             sku_df[["tren", "sku", "status", "hl_plan", "hl_real", "delta_hl", "attainment_pct", "oee_real"]].round(2),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=360,
         )
     with right:
         st.subheader("Estados de cumplimiento")
-        st.plotly_chart(status_bar(comparison["by_sku"]), use_container_width=True)
+        st.plotly_chart(status_bar(comparison["by_sku"]), width="stretch")
 
 with tab_graph:
     st.subheader("Cobertura del grafo aprendido")
     coverage = graph_coverage_table(context["raw_matrices"], context["matrices"], context["all_skus"])
     coverage["direct_coverage_pct"] = (coverage["direct_coverage_pct"] * 100).round(2)
-    st.dataframe(coverage, use_container_width=True, hide_index=True)
+    st.dataframe(coverage, width="stretch", hide_index=True)
 
     ai_results = scenarios["ai_raw"]
     explanations = transition_explanations(ai_results, context["matrices"], context["raw_matrices"])
@@ -411,7 +420,7 @@ with tab_graph:
     seq = scenarios["ai_plan"].get("line_results", {}).get(selected_line, {}).get("seq", [])
     if seq and selected_line in context["matrices"]:
         mat = context["matrices"][selected_line]["changeover_h"].reindex(index=seq, columns=seq)
-        st.plotly_chart(heatmap(mat, f"L{selected_line} matriz de cambio suavizada en secuencia AI"), use_container_width=True)
+        st.plotly_chart(heatmap(mat, f"L{selected_line} matriz de cambio suavizada en secuencia AI"), width="stretch")
 
     st.subheader("Explicacion de arcos seleccionados")
     if line_expl.empty:
@@ -431,7 +440,7 @@ with tab_graph:
             ]
         ].copy()
         show["estimated_oee_degradation"] = (show["estimated_oee_degradation"] * 100).round(2)
-        st.dataframe(show.round(3), use_container_width=True, hide_index=True)
+        st.dataframe(show.round(3), width="stretch", hide_index=True)
 
         labels = [
             f"{row.origin} -> {row.destination}"
@@ -455,7 +464,7 @@ with tab_graph:
                         "count",
                     ]
                 ].round(4),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -472,11 +481,11 @@ with tab_urgent:
                     located["line"] = line
                     located["position"] = seq.index(sku) + 1
             rows.append(located)
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     if scenarios["ai_raw"].get("_urgent_errors") is not None and not scenarios["ai_raw"].get("_urgent_errors", pd.DataFrame()).empty:
         st.error("Urgencias no viables")
-        st.dataframe(scenarios["ai_raw"]["_urgent_errors"], use_container_width=True, hide_index=True)
+        st.dataframe(scenarios["ai_raw"]["_urgent_errors"], width="stretch", hide_index=True)
 
     if scenarios["ai_raw"].get("_ineligible_skus"):
         st.subheader("SKUs fuera del modelo")
@@ -485,4 +494,4 @@ with tab_urgent:
     conflicts = scenarios["ai_raw"].get("_fixed_line_conflicts", pd.DataFrame())
     if conflicts is not None and not conflicts.empty:
         st.subheader("Conflictos de linea fija")
-        st.dataframe(conflicts, use_container_width=True, hide_index=True)
+        st.dataframe(conflicts, width="stretch", hide_index=True)

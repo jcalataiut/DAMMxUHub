@@ -311,6 +311,7 @@ def build_beta_scenarios(
     urgent_orders: Optional[List[dict]] = None,
     use_learned_changeover: bool = True,
     ai_demand_source: str = "real",
+    fixed_original_lines: bool = True,
 ) -> Dict:
     """Build company-plan, actual-production and AI-proposed scenarios."""
     hours_per_week = _as_line_dict(hours_per_week)
@@ -336,7 +337,7 @@ def build_beta_scenarios(
         context,
         hours_per_week=hours_per_week,
         demand_source=ai_demand_source,
-        fixed_original_lines=True,
+        fixed_original_lines=fixed_original_lines,
         time_limit=time_limit,
         urgent_orders=urgent_orders,
         use_learned_changeover=use_learned_changeover,
