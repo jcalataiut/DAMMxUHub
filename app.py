@@ -1365,18 +1365,20 @@ else:
     _ll = [f"L{l}" for l in LINES]
     _real_h = [real_bd[l]["total"] for l in LINES]
     _opt_h  = [opt_bd[l]["total"]  for l in LINES]
-    _colors  = [LINE_COLOR[l] for l in LINES]
+
+    _COLOR_REAL = "#8B95A5"   # gris azulado apagado
+    _COLOR_OPT  = "#10B981"   # verde esmeralda vibrante
 
     _fig_dyn = go.Figure()
     _fig_dyn.add_trace(go.Bar(
         name="Real ejecutado", x=_ll, y=_real_h,
-        marker=dict(color=_colors, opacity=0.35, line=dict(color=_colors, width=1.5)),
+        marker=dict(color=_COLOR_REAL, line=dict(color="#6B7585", width=1.2)),
         text=[f"{h:.0f}h" for h in _real_h], textposition="outside",
         hovertemplate="%{x} Real: %{y:.1f}h<extra></extra>",
     ))
     _fig_dyn.add_trace(go.Bar(
         name="Óptimo", x=_ll, y=_opt_h,
-        marker=dict(color=_colors, opacity=0.90, line=dict(color=_colors, width=1.5)),
+        marker=dict(color=_COLOR_OPT, line=dict(color="#059669", width=1.2)),
         text=[f"{h:.0f}h" for h in _opt_h], textposition="outside",
         hovertemplate="%{x} Óptimo: %{y:.1f}h<extra></extra>",
     ))
@@ -1385,14 +1387,14 @@ else:
             type="line", xref="x", yref="y",
             x0=i - 0.4, x1=i + 0.4,
             y0=HOURS_PER_WEEK[l], y1=HOURS_PER_WEEK[l],
-            line=dict(color="red", dash="dash", width=2),
+            line=dict(color="#EF4444", dash="dash", width=2),
         )
         _ls = real_bd[l]["total"] - opt_bd[l]["total"]
         _fig_dyn.add_annotation(
             x=f"L{l}", y=max(_real_h[i], _opt_h[i]) + 8,
             text=f"{'−' if _ls > 0 else '+'}{abs(_ls):.0f}h",
             showarrow=False,
-            font=dict(size=13, color="#2ca02c" if _ls > 0 else "#d62728"),
+            font=dict(size=13, color="#10B981" if _ls > 0 else "#EF4444"),
         )
     _fig_dyn.update_layout(
         barmode="group", height=300, plot_bgcolor="white",
