@@ -1121,7 +1121,7 @@ page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026"], lab
 
 # ═══════════════════════ PAGE 1: 2025 ═══════════════════════
 if page == "Aprendizaje 2025":
-    st.title("Operation Lab")
+    st.title("OPla Lab")
     st.subheader("Generative Bayesian Complex Networks")
 
     mc1, mc2, mc3 = st.columns(3)
