@@ -1564,10 +1564,13 @@ else:
     _cf_total_saving   = _cf["Ahorro (h)"].sum()
     _cf_total_h        = _cf["Horas totales"].sum()
     _cf_real_oee_avg   = float((_cf["OEE real (%)"] * _cf["HL"]).sum() / _cf["HL"].sum())
-    # OEE óptimo estimado: los ahorros de changeover reducen horas totales, producción constante
-    _cf_prod_h = _cf_total_h * (_cf_real_oee_avg / 100)
-    _cf_opt_total_h    = _cf_total_h - _cf_total_saving
-    _cf_opt_oee        = _cf_prod_h / _cf_opt_total_h if _cf_opt_total_h > 0 else 0.0
+    # OEE correcto: h_tot son horas de producción pura (changeovers están fuera).
+    # Total horas usadas = h_tot + CO. Reducir CO baja el denominador, OEE sube.
+    _cf_prod_h         = (_cf["OEE real (%)"] / 100 * _cf["Horas totales"]).sum()
+    _cf_real_total_used  = _cf_total_h + _cf_total_real_co
+    _cf_opt_total_used   = _cf_total_h + _cf_total_opt_co
+    _cf_real_oee_corr    = _cf_prod_h / _cf_real_total_used if _cf_real_total_used > 0 else 0.0
+    _cf_opt_oee          = _cf_prod_h / _cf_opt_total_used  if _cf_opt_total_used  > 0 else 0.0
 
     m1, m2, m3 = st.columns(3)
     m1.metric("CO total real 2025",   f"{_cf_total_real_co:.0f}h")
@@ -1575,7 +1578,7 @@ else:
               delta=f"{_cf_total_opt_co - _cf_total_real_co:.0f}h ({_cf_total_saving / _cf_total_real_co * 100:.1f}%)",
               delta_color="inverse")
     m3.metric("OEE estimado óptimo",  f"{_cf_opt_oee * 100:.1f}%",
-              delta=f"{(_cf_opt_oee - _cf_real_oee_avg / 100) * 100:+.1f} pp vs real")
+              delta=f"{(_cf_opt_oee - _cf_real_oee_corr) * 100:+.1f} pp vs real")
 
     # Weekly chart: CO real vs óptimo + ahorro acumulado
     _cf_cum = _cf["Ahorro (h)"].cumsum()
