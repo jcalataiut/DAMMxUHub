@@ -1309,6 +1309,15 @@ else:
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
 
+    _oee_cols = st.columns(3)
+    for idx, l in enumerate(LINES):
+        _oee_delta = opt_bd[l]["oee"] - real_bd[l]["oee"]
+        _oee_cols[idx].metric(
+            f"OEE L{l}",
+            f"{opt_bd[l]['oee']*100:.1f}%",
+            delta=f"{_oee_delta*100:+.1f} pp vs real",
+        )
+
     # 3 Bokeh graphs: full historical network with optimized path highlighted
     cg1, cg2, cg3 = st.columns(3)
     for idx, line in enumerate(LINES):
@@ -1321,15 +1330,6 @@ else:
                                     highlight_nodes=set(opt_ind.get(line, [])),
                                     pos=global_pos.get(line))
             components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
-
-    _oee_cols = st.columns(3)
-    for idx, l in enumerate(LINES):
-        _oee_delta = opt_bd[l]["oee"] - real_bd[l]["oee"]
-        _oee_cols[idx].metric(
-            f"OEE L{l}",
-            f"{opt_bd[l]['oee']*100:.1f}%",
-            delta=f"{_oee_delta*100:+.1f} pp vs real",
-        )
 
     gantt_cap = max(
         max(v["total"] for v in planner_bd.values()),
@@ -1354,14 +1354,11 @@ else:
         key="real_g", use_container_width=True,
     )
 
-    # ── Comparativa Real vs AI ───────────────────────────────────────────────
     avail_total = sum(HOURS_PER_WEEK[l] for l in LINES)
     real_prod_t = sum(real_bd[l]["prod"] for l in LINES)
     real_dead_t = real_totals["total"] - real_prod_t
     opt_prod_t  = sum(opt_bd[l]["prod"] for l in LINES)
     opt_dead_t  = opt_total - opt_prod_t
-
-
 
     st.subheader("Óptimo")
     st.plotly_chart(
@@ -1369,14 +1366,40 @@ else:
         key="opt_g", use_container_width=True,
     )
 
-    # ── Dinámica de mejora por línea ─────────────────────────────────────────
+    # ── Comparativa Real vs Óptimo ────────────────────────────────────────────
+    st.subheader("Real ejecutado vs Óptimo")
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("Total horas · Real", f"{real_totals['total']:.1f}h")
+    h2.metric("Total horas · Óptimo", f"{opt_total:.1f}h",
+              delta=f"{opt_total - real_totals['total']:.1f}h vs real",
+              delta_color="inverse")
+    h3.metric("Horas muertas · Real", f"{real_dead_t:.1f}h")
+    h4.metric("Horas muertas · Óptimo",
+              f"{opt_dead_t:.1f}h",
+              delta=f"{opt_dead_t - real_dead_t:.1f}h vs real",
+              delta_color="inverse")
+    st.caption(f"Horas disponibles totales (3 líneas): {avail_total:.0f}h")
+    comp_rows = [
+        {
+            "Línea": f"L{l}",
+            "Total Real": f"{real_bd[l]['total']:.1f}h",
+            "Muertas Real": f"{real_bd[l]['total'] - real_bd[l]['prod']:.1f}h",
+            "Total Óptimo": f"{opt_bd[l]['total']:.1f}h",
+            "Muertas Óptimo": f"{opt_bd[l]['total'] - opt_bd[l]['prod']:.1f}h",
+            "Disponible": f"{HOURS_PER_WEEK[l]:.0f}h",
+        }
+        for l in LINES
+    ]
+    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+
+    # ── Dinámica de mejora por línea ──────────────────────────────────────────
     st.subheader("Dinámica de mejora por línea")
     _ll = [f"L{l}" for l in LINES]
     _real_h = [real_bd[l]["total"] for l in LINES]
     _opt_h  = [opt_bd[l]["total"]  for l in LINES]
 
-    _COLOR_REAL = "#8B95A5"   # gris azulado apagado
-    _COLOR_OPT  = "#10B981"   # verde esmeralda vibrante
+    _COLOR_REAL = "#8B95A5"
+    _COLOR_OPT  = "#10B981"
 
     _fig_dyn = go.Figure()
     _fig_dyn.add_trace(go.Bar(
@@ -1413,33 +1436,85 @@ else:
     )
     st.plotly_chart(_fig_dyn, use_container_width=True, key="dyn_chart")
 
+    # ── Migración de SKUs: Planner teórico → Óptimo ───────────────────────────
+    st.subheader("Migración de SKUs entre líneas")
+    st.caption("SKUs que el optimizador reasigna a una línea distinta respecto al planner teórico.")
 
-
-    # ── Comparativa Real vs AI ───────────────────────────────────────────────
-    st.subheader("Real ejecutado vs Óptimo")
-    h1, h2, h3, h4 = st.columns(4)
-    h1.metric("Total horas · Real", f"{real_totals['total']:.1f}h")
-    h2.metric("Total horas · Óptimo", f"{opt_total:.1f}h",
-              delta=f"{opt_total - real_totals['total']:.1f}h vs real",
-              delta_color="inverse")
-    h3.metric("Horas muertas · Real", f"{real_dead_t:.1f}h")
-    h4.metric("Horas muertas · Óptimo",
-              f"{opt_dead_t:.1f}h",
-              delta=f"{opt_dead_t - real_dead_t:.1f}h vs real",
-              delta_color="inverse")
-    st.caption(f"Horas disponibles totales (3 líneas): {avail_total:.0f}h")
-    comp_rows = [
-        {
-            "Línea": f"L{l}",
-            "Total Real": f"{real_bd[l]['total']:.1f}h",
-            "Muertas Real": f"{real_bd[l]['total'] - real_bd[l]['prod']:.1f}h",
-            "Total Óptimo": f"{opt_bd[l]['total']:.1f}h",
-            "Muertas Óptimo": f"{opt_bd[l]['total'] - opt_bd[l]['prod']:.1f}h",
-            "Disponible": f"{HOURS_PER_WEEK[l]:.0f}h",
-        }
-        for l in LINES
+    _planner_line = {sku: line for line, skus in planner_ind.items() for sku in skus}
+    _opt_line = {sku: line for line, skus in opt_ind.items() for sku in skus}
+    _all_skus = set(_planner_line) | set(_opt_line)
+    _migrations = [
+        {"SKU": sku,
+         "Planner": f"L{_planner_line[sku]}" if sku in _planner_line else "—",
+         "Óptimo":  f"L{_opt_line[sku]}"     if sku in _opt_line     else "—",
+         "Cambio":  _planner_line.get(sku) != _opt_line.get(sku)}
+        for sku in sorted(_all_skus)
     ]
-    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+    _moved = [r for r in _migrations if r["Cambio"]]
+
+    if _moved:
+        # Sankey con colores vivos: nodos izq = Planner, nodos der = Óptimo
+        # Cada línea tiene su color; los flujos heredan el color de la línea origen
+        def _hex_to_rgba(hex_color, alpha):
+            r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+            return f"rgba({r},{g},{b},{alpha})"
+
+        _line_idx = {l: i for i, l in enumerate(LINES)}
+        _flow: dict = {}
+        for r in _moved:
+            if r["Planner"] == "—" or r["Óptimo"] == "—":
+                continue
+            src = _line_idx[r["Planner"][1:]]
+            tgt = _line_idx[r["Óptimo"][1:]] + len(LINES)
+            _flow[(src, tgt)] = _flow.get((src, tgt), 0) + 1
+
+        _node_labels = [f"Planner  L{l}" for l in LINES] + [f"Óptimo  L{l}" for l in LINES]
+        _node_colors = [_hex_to_rgba(LINE_COLOR[l], 0.85) for l in LINES] * 2
+
+        _link_sources = [s for s, _ in _flow]
+        _link_targets = [t for _, t in _flow]
+        _link_values  = [v for v in _flow.values()]
+        _link_colors  = [_hex_to_rgba(LINE_COLOR[LINES[s]], 0.35) for s in _link_sources]
+        _link_labels  = [
+            f"{v} SKU{'s' if v > 1 else ''}: "
+            + ", ".join(r["SKU"] for r in _moved
+                        if r["Planner"] != "—" and r["Óptimo"] != "—"
+                        and _line_idx[r["Planner"][1:]] == s
+                        and _line_idx[r["Óptimo"][1:]] + len(LINES) == t)
+            for (s, t), v in _flow.items()
+        ]
+
+        _fig_sk = go.Figure(go.Sankey(
+            arrangement="snap",
+            node=dict(
+                pad=28,
+                thickness=26,
+                label=_node_labels,
+                color=_node_colors,
+                line=dict(color="rgba(255,255,255,0.6)", width=1),
+            ),
+            link=dict(
+                source=_link_sources,
+                target=_link_targets,
+                value=_link_values,
+                color=_link_colors,
+                label=_link_labels,
+                hovertemplate="%{label}<extra></extra>",
+            ),
+        ))
+        _fig_sk.update_layout(
+            height=320,
+            margin=dict(l=20, r=20, t=20, b=20),
+            paper_bgcolor="white",
+            font=dict(size=13, color="#333"),
+        )
+        st.plotly_chart(_fig_sk, use_container_width=True, key="sankey_migration")
+
+        _move_df = pd.DataFrame([{"SKU": r["SKU"], "Planner": r["Planner"], "→ Óptimo": r["Óptimo"]}
+                                  for r in _moved])
+        st.dataframe(_move_df, hide_index=True, use_container_width=True)
+    else:
+        st.info("El optimizador mantiene todos los SKUs en la misma línea que el planner teórico.")
 
 
 
