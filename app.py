@@ -1307,6 +1307,60 @@ else:
         "la reducción principal compara Óptimo contra la producción real ejecutada."
     )
 
+    opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
+
+    # 3 Bokeh graphs: full historical network with optimized path highlighted
+    cg1, cg2, cg3 = st.columns(3)
+    for idx, line in enumerate(LINES):
+        with [cg1, cg2, cg3][idx]:
+            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
+            ef["weight"] = ef.apply(lambda r: changeover_hours(opt_ctx, r["prev_sku"], r["next_sku"], line), axis=1)
+            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
+                                    path_edges=opt_path.get(line, []),
+                                    highlight_nodes=set(opt_ind.get(line, [])),
+                                    pos=global_pos.get(line))
+            components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
+
+    gantt_cap = max(
+        max(v["total"] for v in planner_bd.values()),
+        max(v["total"] for v in real_bd.values()),
+        max(v["total"] for v in opt_bd.values()),
+        max(HOURS_PER_WEEK.values()),
+    ) + 10
+
+    st.subheader("Planner teórico")
+    st.plotly_chart(
+        gantt_figure_from_sequences(
+            opt_ctx, planner_ind, planner_volumes, title="", cap=gantt_cap,
+        ),
+        key="planner_g", use_container_width=True,
+    )
+
+    st.subheader("Real ejecutado")
+    st.plotly_chart(
+        gantt_figure_from_sequences(
+            opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap, oee_by_line=real_oee_lines,
+        ),
+        key="real_g", use_container_width=True,
+    )
+
+    # ── Comparativa Real vs AI ───────────────────────────────────────────────
+    avail_total = sum(HOURS_PER_WEEK[l] for l in LINES)
+    real_prod_t = sum(real_bd[l]["prod"] for l in LINES)
+    real_dead_t = real_totals["total"] - real_prod_t
+    opt_prod_t  = sum(opt_bd[l]["prod"] for l in LINES)
+    opt_dead_t  = opt_total - opt_prod_t
+
+
+
+    st.subheader("Óptimo")
+    st.plotly_chart(
+        gantt_figure(ai_ctx, opt_ind, title="", cap=gantt_cap),
+        key="opt_g", use_container_width=True,
+    )
+
+    # ── Dinámica de mejora por línea ─────────────────────────────────────────
     st.subheader("Dinámica de mejora por línea")
     _ll = [f"L{l}" for l in LINES]
     _real_h = [real_bd[l]["total"] for l in LINES]
@@ -1357,61 +1411,14 @@ else:
             delta=f"{_oee_delta*100:+.1f} pp vs real",
         )
 
-    opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
-
-    # 3 Bokeh graphs: full historical network with optimized path highlighted
-    cg1, cg2, cg3 = st.columns(3)
-    for idx, line in enumerate(LINES):
-        with [cg1, cg2, cg3][idx]:
-            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-            ef["weight"] = ef.apply(lambda r: changeover_hours(opt_ctx, r["prev_sku"], r["next_sku"], line), axis=1)
-            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
-                                    path_edges=opt_path.get(line, []),
-                                    highlight_nodes=set(opt_ind.get(line, [])),
-                                    pos=global_pos.get(line))
-            components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
-
-    gantt_cap = max(
-        max(v["total"] for v in planner_bd.values()),
-        max(v["total"] for v in real_bd.values()),
-        max(v["total"] for v in opt_bd.values()),
-        max(HOURS_PER_WEEK.values()),
-    ) + 10
-
-    st.subheader("Planner teórico")
-    st.plotly_chart(
-        gantt_figure_from_sequences(
-            opt_ctx, planner_ind, planner_volumes, title="", cap=gantt_cap,
-        ),
-        key="planner_g", use_container_width=True,
-    )
-
-    st.subheader("Real ejecutado")
-    st.plotly_chart(
-        gantt_figure_from_sequences(
-            opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap, oee_by_line=real_oee_lines,
-        ),
-        key="real_g", use_container_width=True,
-    )
-
     # ── Comparativa Real vs AI ───────────────────────────────────────────────
-    avail_total = sum(HOURS_PER_WEEK[l] for l in LINES)
-    real_prod_t = sum(real_bd[l]["prod"] for l in LINES)
-    real_dead_t = real_totals["total"] - real_prod_t
-    opt_prod_t  = sum(opt_bd[l]["prod"] for l in LINES)
-    opt_dead_t  = opt_total - opt_prod_t
-
     st.subheader("Real ejecutado vs Óptimo")
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("Total horas · Real", f"{real_totals['total']:.1f}h")
     h2.metric("Total horas · Óptimo", f"{opt_total:.1f}h",
               delta=f"{opt_total - real_totals['total']:.1f}h vs real",
               delta_color="inverse")
-    h3.metric("Horas muertas · Real",
-              f"{real_dead_t:.1f}h",
-              delta=f"{real_dead_t / max(real_totals['total'], 1) * 100:.0f}% del total",
-              delta_color="off")
+    h3.metric("Horas muertas · Real", f"{real_dead_t:.1f}h")
     h4.metric("Horas muertas · Óptimo",
               f"{opt_dead_t:.1f}h",
               delta=f"{opt_dead_t - real_dead_t:.1f}h vs real",
@@ -1429,11 +1436,6 @@ else:
         for l in LINES
     ]
     st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
-    # ────────────────────────────────────────────────────────────────────────
 
-    st.subheader("Óptimo")
-    st.plotly_chart(
-        gantt_figure(ai_ctx, opt_ind, title="", cap=gantt_cap),
-        key="opt_g", use_container_width=True,
-    )
+
 
