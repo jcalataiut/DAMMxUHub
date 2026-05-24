@@ -1517,5 +1517,92 @@ else:
     else:
         st.info("El optimizador mantiene todos los SKUs en la misma línea que el planner teórico.")
 
+    # ── Contrafactual 2025 ────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Contrafactual 2025 — Potencial ahorro anual")
 
+    if "cf_2025" not in st.session_state:
+        _ctx_cf = replace(ctx, changeover_mode="observed_mean", changeover_cache={})
+        _cf_rows = []
+        for _wk in range(1, num_weeks + 1):
+            _wd = gantt_history[gantt_history["week_idx"] == _wk]
+            _real_co, _opt_co = 0.0, 0.0
+            _real_h   = float(_wd["h_tot"].sum())
+            _real_hl  = float(_wd["hl"].sum())
+            _real_oee = _weighted_average(_wd, "oee", "hl") if not _wd.empty else 0.0
+            for _ln in LINES:
+                _ld = _wd[_wd["line"] == _ln].sort_values("fecha")
+                _seq = _ld["sku"].tolist()
+                if len(_seq) < 2:
+                    continue
+                _real_co += sum(
+                    changeover_hours(_ctx_cf, _seq[i], _seq[i + 1], _ln)
+                    for i in range(len(_seq) - 1)
+                )
+                # Nearest-neighbour reorder
+                _rem, _cur = list(_seq), _seq[0]
+                _rem.pop(0)
+                while _rem:
+                    _nxt = min(_rem, key=lambda s: changeover_hours(_ctx_cf, _cur, s, _ln))
+                    _opt_co += changeover_hours(_ctx_cf, _cur, _nxt, _ln)
+                    _rem.remove(_nxt)
+                    _cur = _nxt
+            _cf_rows.append({
+                "Semana": _wk,
+                "Horas totales": round(_real_h, 1),
+                "CO real (h)":   round(_real_co, 1),
+                "CO óptimo (h)": round(_opt_co, 1),
+                "Ahorro (h)":    round(_real_co - _opt_co, 1),
+                "HL":            round(_real_hl, 0),
+                "OEE real (%)":  round(_real_oee * 100, 1),
+            })
+        st.session_state["cf_2025"] = pd.DataFrame(_cf_rows)
 
+    _cf = st.session_state["cf_2025"]
+    _cf_total_real_co  = _cf["CO real (h)"].sum()
+    _cf_total_opt_co   = _cf["CO óptimo (h)"].sum()
+    _cf_total_saving   = _cf["Ahorro (h)"].sum()
+    _cf_total_h        = _cf["Horas totales"].sum()
+    _cf_real_oee_avg   = float((_cf["OEE real (%)"] * _cf["HL"]).sum() / _cf["HL"].sum())
+    # OEE óptimo estimado: los ahorros de changeover reducen horas totales, producción constante
+    _cf_prod_h = _cf_total_h * (_cf_real_oee_avg / 100)
+    _cf_opt_total_h    = _cf_total_h - _cf_total_saving
+    _cf_opt_oee        = _cf_prod_h / _cf_opt_total_h if _cf_opt_total_h > 0 else 0.0
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("CO total real 2025",   f"{_cf_total_real_co:.0f}h")
+    m2.metric("CO total óptimo 2025", f"{_cf_total_opt_co:.0f}h",
+              delta=f"{_cf_total_opt_co - _cf_total_real_co:.0f}h ({_cf_total_saving / _cf_total_real_co * 100:.1f}%)",
+              delta_color="inverse")
+    m3.metric("OEE estimado óptimo",  f"{_cf_opt_oee * 100:.1f}%",
+              delta=f"{(_cf_opt_oee - _cf_real_oee_avg / 100) * 100:+.1f} pp vs real")
+
+    # Weekly chart: CO real vs óptimo + ahorro acumulado
+    _cf_cum = _cf["Ahorro (h)"].cumsum()
+    _fig_cf = go.Figure()
+    _fig_cf.add_trace(go.Bar(
+        name="CO real", x=_cf["Semana"], y=_cf["CO real (h)"],
+        marker_color="#8B95A5", hovertemplate="S%{x} · Real: %{y:.1f}h<extra></extra>",
+    ))
+    _fig_cf.add_trace(go.Bar(
+        name="CO óptimo", x=_cf["Semana"], y=_cf["CO óptimo (h)"],
+        marker_color="#10B981", hovertemplate="S%{x} · Óptimo: %{y:.1f}h<extra></extra>",
+    ))
+    _fig_cf.add_trace(go.Scatter(
+        name="Ahorro acumulado", x=_cf["Semana"], y=_cf_cum,
+        mode="lines", line=dict(color="#EF4444", width=2, dash="dot"),
+        yaxis="y2", hovertemplate="S%{x} · Acumulado: %{y:.1f}h<extra></extra>",
+    ))
+    _fig_cf.update_layout(
+        barmode="group", height=340, plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        xaxis=dict(title="Semana", dtick=4),
+        yaxis=dict(title="Horas changeover / semana", gridcolor="#eee"),
+        yaxis2=dict(title="Ahorro acumulado (h)", overlaying="y", side="right",
+                    showgrid=False, tickfont=dict(color="#EF4444")),
+        margin=dict(l=50, r=60, t=30, b=30),
+    )
+    st.plotly_chart(_fig_cf, use_container_width=True, key="cf_2025_chart")
+
+    with st.expander("Ver detalle semanal"):
+        st.dataframe(_cf, hide_index=True, use_container_width=True)
