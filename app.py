@@ -652,29 +652,6 @@ def gantt_animation(ctx, individual, title=""):
     return fig
 
 
-def stacked_hours(base_bd, opt_bd, label="", base_label="Real"):
-    cats, parts = [], {"Prod.": [], "Changeover": [], "Arranque": [], "Holgura": []}
-    cls = {"Prod.": "#4c72b0", "Changeover": "#dd8452", "Arranque": "#8c8c8c", "Holgura": "#cfe2f3"}
-    for line in LINES:
-        for sc, bd in ((base_label, base_bd), (label, opt_bd)):
-            cats.append(f"L{line}·{sc}")
-            parts["Prod."].append(bd[line]["prod"])
-            parts["Changeover"].append(bd[line]["changeover"])
-            parts["Arranque"].append(bd[line]["startup"])
-            parts["Holgura"].append(max(0, HOURS_PER_WEEK[line] - bd[line]["total"]))
-    fig = go.Figure()
-    for k, vs in parts.items():
-        fig.add_trace(go.Bar(name=k, x=cats, y=vs, marker_color=cls[k],
-                              text=[f"{v:.0f}h" if v > 4 else "" for v in vs], textposition="inside"))
-    for i, ln in enumerate(LINES):
-        fig.add_shape(type="line", x0=i*2-.45, x1=i*2+1.45, y0=HOURS_PER_WEEK[ln], y1=HOURS_PER_WEEK[ln],
-                       line=dict(color="red", dash="dash", width=1.5))
-    fig.update_layout(barmode="stack", height=300, plot_bgcolor="white",
-                       legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                       margin=dict(l=40, r=10, t=15, b=30))
-    fig.update_yaxes(gridcolor="#eee", range=[0, max(HOURS_PER_WEEK.values())+20])
-    return fig
-
 
 def scenario_total(ctx, individual, mode, hdi_mass, prior_alpha):
     previous = (
@@ -1460,19 +1437,3 @@ else:
         key="opt_g", use_container_width=True,
     )
 
-    mc1, mc2 = st.columns(2)
-    mc1.plotly_chart(stacked_hours(real_bd, opt_bd, "Óptimo", base_label="Real"), key="stacked")
-    with mc2:
-        rows = [{
-            "Línea": f"L{l}",
-            "Planner": f"{planner_bd[l]['total']:.1f}h",
-            "Real": f"{real_bd[l]['total']:.1f}h",
-            "Óptimo": f"{opt_bd[l]['total']:.1f}h",
-            "Min": f"{min_bd[l]['total']:.1f}h",
-            "Worst": f"{worst_bd[l]['total']:.1f}h",
-            "Δ vs real": f"{real_bd[l]['total']-opt_bd[l]['total']:+.1f}h",
-            "OEE real": f"{real_bd[l]['oee']*100:.1f}%",
-            "OEE Óptimo": f"{opt_bd[l]['oee']*100:.1f}%",
-            "OK": "✓" if opt_bd[l]["total"] <= HOURS_PER_WEEK[l] else "✗",
-        } for l in LINES]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
