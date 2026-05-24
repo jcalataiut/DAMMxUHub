@@ -474,10 +474,21 @@ else:
     c3.metric("Ahorro", f"{saved:+.1f}h", delta=f"{saved/baseline_total*100:+.1f}%")
     c4.metric("Tiempo", f"{result['elapsed']:.1f}s")
 
-    opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES}
+    opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
 
-    # Animated Gantt
-    st.plotly_chart(gantt_animation(ctx, opt_ind, f"{an} optimizado"), key="gantt_anim")
+    # 3 Bokeh graphs (optimized path over historical network)
+    cg1, cg2, cg3 = st.columns(3)
+    for idx, line in enumerate(LINES):
+        with [cg1, cg2, cg3][idx]:
+            skus_l = set(opt_ind.get(line, []) + base_ind.get(line, []))
+            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
+            ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
+            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
+            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
+            nf = nf[nf["sku"].isin(skus_l)]
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []),
+                                    pos=global_pos.get(line))
+            components.html(file_html(fig, INLINE, ""), height=400, scrolling=False)
 
     g1, g2 = st.columns(2)
     with g1:
