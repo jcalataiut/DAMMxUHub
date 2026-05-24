@@ -65,19 +65,6 @@ def infer_units_per_case(sku: str, description: Optional[str] = None) -> int:
     return 24
 
 
-def planned_hl_from_cases(
-    sku: str,
-    cases: float,
-    *,
-    description: Optional[str] = None,
-) -> float:
-    """Convert planned cases to HL using SKU format and inferred case size."""
-    sku_format = infer_sku_format(sku)
-    hl_per_unit = CAN_HL_BY_FORMAT.get(sku_format, 0.0)
-    units_per_case = infer_units_per_case(sku, description)
-    return float(cases or 0.0) * units_per_case * hl_per_unit
-
-
 def load_operational_excel(path: Path) -> pd.DataFrame:
     """Load one standard Damm operations export and normalize common columns."""
     df = pd.read_excel(path)

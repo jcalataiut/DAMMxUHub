@@ -401,40 +401,6 @@ class PostMortemAnalyzer:
         self._transition_matrices = result
         return result
 
-    def build_sophisticated_matrices(
-        self,
-        skus: List[str],
-        similarity_weights: Optional[Dict[str, float]] = None
-    ) -> Dict[str, Dict[str, pd.DataFrame]]:
-        """
-        Build smoothed transition matrices using the SophisticatedGraphModel.
-        """
-        try:
-            from .sophisticated_graph import SophisticatedGraphModel
-        except ImportError:
-            from sophisticated_graph import SophisticatedGraphModel
-        raw_matrices = self.build_transition_matrices()
-        
-        model = SophisticatedGraphModel(df_oee=self._df_master, similarity_weights=similarity_weights)
-        
-        smoothed_matrices = {}
-        for line in self.df_oee["tren"].dropna().unique():
-            line = str(line)
-            if line not in raw_matrices:
-                continue
-            
-            smoothed_oee, smoothed_co = model.smooth_transition_matrices(line, skus, raw_matrices)
-            smoothed_matrices[line] = {
-                "oee_degradation": smoothed_oee,
-                "changeover_h": smoothed_co,
-                "count": raw_matrices[line]["count"],
-                "oee_mean": raw_matrices[line]["oee_mean"],
-                "_raw": raw_matrices[line]["_raw"],
-                "model": model  # Store model instance for explanation queries
-            }
-            
-        return smoothed_matrices
-
     # ─────────────────────────────────────────────────────────────────────────
     # 3. GRAFO DIRIGIDO
     # ─────────────────────────────────────────────────────────────────────────

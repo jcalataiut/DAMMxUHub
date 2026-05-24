@@ -6,9 +6,7 @@ from copy import deepcopy
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
-
 from ga_optimizer import (
-    LINES,
     Chromosome,
     OptimizerContext,
     evaluate_schedule,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import colorsys
 import json
 import time
 from dataclasses import replace
@@ -856,42 +855,115 @@ def context_for_plan_week(ctx, df_plan, df_real):
     )
 
 
-def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None):
+def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, oee_by_line=None):
     rows = []
     for line in LINES:
-        cursor = STARTUP_HOURS[line]
-        if sequences.get(line):
+        observed_oee = oee_by_line.get(line) if oee_by_line is not None else None
+        line_sequence = sequences.get(line, [])
+        if not line_sequence:
+            continue
+            
+        if observed_oee is not None and np.isfinite(observed_oee) and observed_oee > 0:
+            # Scale production blocks to match observed OEE total time
+            # startup + changeovers are kept at standard theoretical values
+            startup_h = STARTUP_HOURS[line]
+            
+            # 1. Compute standard changeovers
+            co_hours_list = []
+            prev = None
+            for sku in line_sequence:
+                if prev is not None:
+                    co = changeover_hours(ctx, prev, sku, line)
+                    co_hours_list.append(co)
+                prev = sku
+            
+            non_prod_h = startup_h + sum(co_hours_list)
+            
+            # 2. Compute theoretical production time
+            prod_h_sum = sum(
+                _line_sku_volume(volume_map, line, sku, ctx.volumes) / throughput_rate(ctx, sku, line)
+                for sku in line_sequence
+            )
+            
+            total_h = prod_h_sum / observed_oee
+            
+            # 3. Determine scale factor for production parts
+            if prod_h_sum > 0:
+                scale_factor = max(1.0, (total_h - non_prod_h) / prod_h_sum)
+            else:
+                scale_factor = 1.0
+                
+            # 4. Construct rows with scaled production
+            cursor = startup_h
             rows.append({
                 "line": f"L{line}", "task": "ARRANQUE", "sku": "_arr",
-                "start_h": 0.0, "end_h": STARTUP_HOURS[line],
-                "duration_h": STARTUP_HOURS[line], "type": "startup",
+                "start_h": 0.0, "end_h": startup_h,
+                "duration_h": startup_h, "type": "startup",
                 "format": "", "hl": 0.0, "rate_hl_per_h": 0.0,
             })
-        prev = None
-        for sku in sequences.get(line, []):
-            if prev is not None:
-                co = changeover_hours(ctx, prev, sku, line)
-                if co > 0:
-                    rows.append({
-                        "line": f"L{line}", "task": f"CO {prev}→{sku}",
-                        "sku": sku, "start_h": cursor, "end_h": cursor + co,
-                        "duration_h": co, "type": "changeover",
-                        "format": ctx.sku_format.get(sku, ""),
-                        "hl": 0.0, "rate_hl_per_h": 0.0,
-                    })
-                    cursor += co
-            hl = _line_sku_volume(volume_map, line, sku, ctx.volumes)
-            rate = throughput_rate(ctx, sku, line)
-            prod_h = hl / rate if rate else 0.0
-            rows.append({
-                "line": f"L{line}", "task": sku, "sku": sku,
-                "start_h": cursor, "end_h": cursor + prod_h,
-                "duration_h": prod_h, "type": "production",
-                "format": ctx.sku_format.get(sku, ""),
-                "hl": hl, "rate_hl_per_h": rate,
-            })
-            cursor += prod_h
-            prev = sku
+            
+            prev = None
+            co_idx = 0
+            for sku in line_sequence:
+                if prev is not None:
+                    co = co_hours_list[co_idx]
+                    co_idx += 1
+                    if co > 0:
+                        rows.append({
+                            "line": f"L{line}", "task": f"CO {prev}→{sku}",
+                            "sku": sku, "start_h": cursor, "end_h": cursor + co,
+                            "duration_h": co, "type": "changeover",
+                            "format": ctx.sku_format.get(sku, ""),
+                            "hl": 0.0, "rate_hl_per_h": 0.0,
+                        })
+                        cursor += co
+                
+                hl = _line_sku_volume(volume_map, line, sku, ctx.volumes)
+                rate = throughput_rate(ctx, sku, line)
+                prod_h = (hl / rate if rate else 0.0) * scale_factor
+                rows.append({
+                    "line": f"L{line}", "task": sku, "sku": sku,
+                    "start_h": cursor, "end_h": cursor + prod_h,
+                    "duration_h": prod_h, "type": "production",
+                    "format": ctx.sku_format.get(sku, ""),
+                    "hl": hl, "rate_hl_per_h": rate,
+                })
+                cursor += prod_h
+                prev = sku
+        else:
+            cursor = STARTUP_HOURS[line]
+            if sequences.get(line):
+                rows.append({
+                    "line": f"L{line}", "task": "ARRANQUE", "sku": "_arr",
+                    "start_h": 0.0, "end_h": STARTUP_HOURS[line],
+                    "duration_h": STARTUP_HOURS[line], "type": "startup",
+                    "format": "", "hl": 0.0, "rate_hl_per_h": 0.0,
+                })
+            prev = None
+            for sku in line_sequence:
+                if prev is not None:
+                    co = changeover_hours(ctx, prev, sku, line)
+                    if co > 0:
+                        rows.append({
+                            "line": f"L{line}", "task": f"CO {prev}→{sku}",
+                            "sku": sku, "start_h": cursor, "end_h": cursor + co,
+                            "duration_h": co, "type": "changeover",
+                            "format": ctx.sku_format.get(sku, ""),
+                            "hl": 0.0, "rate_hl_per_h": 0.0,
+                        })
+                        cursor += co
+                hl = _line_sku_volume(volume_map, line, sku, ctx.volumes)
+                rate = throughput_rate(ctx, sku, line)
+                prod_h = hl / rate if rate else 0.0
+                rows.append({
+                    "line": f"L{line}", "task": sku, "sku": sku,
+                    "start_h": cursor, "end_h": cursor + prod_h,
+                    "duration_h": prod_h, "type": "production",
+                    "format": ctx.sku_format.get(sku, ""),
+                    "hl": hl, "rate_hl_per_h": rate,
+                })
+                cursor += prod_h
+                prev = sku
 
     if not rows:
         return go.Figure()
@@ -1341,7 +1413,7 @@ else:
     st.subheader("Real ejecutado")
     st.plotly_chart(
         gantt_figure_from_sequences(
-            opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap,
+            opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap, oee_by_line=real_oee_lines,
         ),
         key="real_g", use_container_width=True,
     )
