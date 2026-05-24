@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Literal, Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,6 +41,7 @@ def parse_format(sku: str) -> str:
 
 
 Chromosome = Dict[str, List[str]]
+ChangeoverMode = Literal["bayes_mean", "observed_mean", "hdi_lower", "hdi_upper"]
 
 
 @dataclass
@@ -54,8 +56,13 @@ class OptimizerContext:
     sku_global_rate: Dict[str, float]
     plant_mean_rate: float
     changeover: Dict[str, Dict[Tuple[str, str], float]]
+    changeover_stats: Dict[str, Dict[Tuple[str, str], Dict[str, object]]]
     line_mean_co: Dict[str, float]
     hist_pairs: set
+    changeover_mode: ChangeoverMode = "bayes_mean"
+    changeover_hdi_mass: float = 0.95
+    changeover_prior_alpha: float = 2.0
+    changeover_cache: Dict[Tuple[str, str, str, str, float, float], float] = field(default_factory=dict)
 
 
 def load_clean_context(clean_dir: Path) -> OptimizerContext:
@@ -102,20 +109,33 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
     plant_mean_rate = float(throughput_df["rate"].median())
 
     changeover: Dict[str, Dict[Tuple[str, str], float]] = {}
+    changeover_stats: Dict[str, Dict[Tuple[str, str], Dict[str, object]]] = {}
     line_mean_co: Dict[str, float] = {}
     for line in LINES:
         line_co = changeover_df[changeover_df["line"] == line]
         co_map: Dict[Tuple[str, str], float] = {}
+        stats_map: Dict[Tuple[str, str], Dict[str, object]] = {}
         for _, row in line_co.iterrows():
-            co_map[(row["prev_sku"], row["next_sku"])] = float(row["hours"])
+            key = (row["prev_sku"], row["next_sku"])
+            hours = float(row["hours"])
+            co_map[key] = hours
+            samples = _parse_changeover_samples(row, hours)
+            stats_map[key] = {
+                "mean": hours,
+                "std": float(row.get("std_hours", np.std(samples, ddof=1) if len(samples) > 1 else 0.0) or 0.0),
+                "count": int(row.get("count", len(samples)) or len(samples)),
+                "samples": samples,
+            }
         changeover[line] = co_map
+        changeover_stats[line] = stats_map
         line_mean_co[line] = float(line_co["hours"].mean()) if not line_co.empty else 1.0
 
     return OptimizerContext(
         weekly=weekly, skus=skus, volumes=volumes, sku_format=sku_format,
         eligible=eligible, fallback_skus=fallback_skus, throughput=throughput,
         sku_global_rate=sku_global_rate, plant_mean_rate=plant_mean_rate,
-        changeover=changeover, line_mean_co=line_mean_co, hist_pairs=hist_pairs,
+        changeover=changeover, changeover_stats=changeover_stats,
+        line_mean_co=line_mean_co, hist_pairs=hist_pairs,
     )
 
 
@@ -194,6 +214,88 @@ def build_context(data_dir: Path) -> OptimizerContext:
     )
 
 
+def _parse_changeover_samples(row: pd.Series, fallback_hours: float) -> List[float]:
+    raw_samples = row.get("samples_json")
+    if pd.notna(raw_samples):
+        try:
+            parsed = json.loads(str(raw_samples))
+            samples = [float(v) for v in parsed if pd.notna(v) and np.isfinite(float(v))]
+            if samples:
+                return samples
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    count = int(row.get("count", 1) or 1)
+    return [float(fallback_hours)] * max(1, count)
+
+
+def set_changeover_policy(
+    ctx: OptimizerContext,
+    *,
+    mode: ChangeoverMode,
+    hdi_mass: float = 0.95,
+    prior_alpha: float = 2.0,
+) -> None:
+    ctx.changeover_mode = mode
+    ctx.changeover_hdi_mass = float(np.clip(hdi_mass, 0.5, 0.995))
+    ctx.changeover_prior_alpha = float(max(1.01, prior_alpha))
+
+
+def _stable_seed(*parts: str) -> int:
+    digest = hashlib.blake2b("|".join(parts).encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "little") % (2**32 - 1)
+
+
+def _hdi_from_samples(samples: np.ndarray, mass: float) -> Tuple[float, float]:
+    if len(samples) == 0:
+        return 0.0, 0.0
+    ordered = np.sort(samples)
+    window = max(1, int(np.floor(mass * len(ordered))))
+    if window >= len(ordered):
+        return float(ordered[0]), float(ordered[-1])
+    widths = ordered[window:] - ordered[:len(ordered) - window]
+    start = int(np.argmin(widths))
+    return float(ordered[start]), float(ordered[start + window])
+
+
+def _bayesian_changeover_value(
+    ctx: OptimizerContext,
+    line: str,
+    pair: Tuple[str, str],
+    stats: Dict[str, object],
+) -> float:
+    mode = ctx.changeover_mode
+    samples = np.asarray(stats.get("samples", []), dtype=float)
+    samples = samples[np.isfinite(samples) & (samples >= 0)]
+    if len(samples) == 0:
+        return float(stats.get("mean", ctx.line_mean_co[line]))
+
+    if mode == "observed_mean":
+        return float(stats.get("mean", np.mean(samples)))
+
+    alpha = ctx.changeover_prior_alpha + len(samples)
+    prior_beta = ctx.line_mean_co.get(line, 1.0) * (ctx.changeover_prior_alpha - 1.0)
+    beta = prior_beta + float(samples.sum())
+
+    if mode == "bayes_mean":
+        return beta / max(alpha - 1.0, 0.001)
+
+    cache_key = (
+        line, pair[0], pair[1], mode,
+        round(ctx.changeover_hdi_mass, 4),
+        round(ctx.changeover_prior_alpha, 4),
+    )
+    if cache_key in ctx.changeover_cache:
+        return ctx.changeover_cache[cache_key]
+
+    rng = np.random.default_rng(_stable_seed(line, pair[0], pair[1], mode))
+    posterior_rate = rng.gamma(shape=alpha, scale=1.0 / beta, size=4000)
+    posterior_mean_time = 1.0 / posterior_rate
+    low, high = _hdi_from_samples(posterior_mean_time, ctx.changeover_hdi_mass)
+    value = low if mode == "hdi_lower" else high
+    ctx.changeover_cache[cache_key] = float(value)
+    return float(value)
+
+
 def throughput_rate(ctx: OptimizerContext, sku: str, line: str) -> float:
     rate = ctx.throughput.get((sku, line))
     if rate is None or not np.isfinite(rate):
@@ -205,7 +307,15 @@ def changeover_hours(ctx: OptimizerContext, prev_sku: str, next_sku: str,
                      line: str) -> float:
     if prev_sku == next_sku:
         return 0.0
-    val = ctx.changeover[line].get((prev_sku, next_sku))
+    pair = (prev_sku, next_sku)
+    stats = ctx.changeover_stats.get(line, {}).get(pair)
+    if stats is None:
+        pair = (next_sku, prev_sku)
+        stats = ctx.changeover_stats.get(line, {}).get(pair)
+    if stats is not None:
+        val = _bayesian_changeover_value(ctx, line, pair, stats)
+    else:
+        val = ctx.changeover[line].get((prev_sku, next_sku))
     if val is None or not np.isfinite(val):
         val = ctx.changeover[line].get((next_sku, prev_sku))
     if val is None or not np.isfinite(val):

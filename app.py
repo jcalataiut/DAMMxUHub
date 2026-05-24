@@ -3,6 +3,7 @@ from __future__ import annotations
 import colorsys
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List
 
@@ -19,21 +20,36 @@ from bokeh.plotting import figure
 from bokeh.resources import CDN
 
 import ga_optimizer as ga_mod
+from data_loaders import (
+    actual_sequences_from_production,
+    load_planificado_producciones,
+    load_real_production_week,
+    planned_demand_from_planificado,
+    planned_sequences_from_planificado,
+)
 from ga_optimizer import (
     HOURS_PER_WEEK,
     LINES,
     OptimizerContext,
+    PHYSICAL_FORMAT_BY_LINE,
+    STARTUP_HOURS,
     baseline_individual,
     breakdown,
     changeover_hours,
     evolve,
     load_clean_context,
+    parse_format,
+    throughput_rate,
     schedule_to_gantt,
+    set_changeover_policy,
 )
 from simulated_annealing import run_sa
 
 HERE = Path(__file__).resolve().parent
 CLEAN_DIR = HERE / "clean_data"
+RAW_DIR = HERE / "raw_data"
+WEEK_START_2026 = "2026-05-18"
+WEEK_END_2026 = "2026-05-22 23:59:59"
 
 st.set_page_config(page_title="LineWise", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
@@ -637,11 +653,11 @@ def gantt_animation(ctx, individual, title=""):
     return fig
 
 
-def stacked_hours(base_bd, opt_bd, label=""):
+def stacked_hours(base_bd, opt_bd, label="", base_label="Real"):
     cats, parts = [], {"Prod.": [], "Changeover": [], "Arranque": [], "Holgura": []}
     cls = {"Prod.": "#4c72b0", "Changeover": "#dd8452", "Arranque": "#8c8c8c", "Holgura": "#cfe2f3"}
     for line in LINES:
-        for sc, bd in (("Plan", base_bd), (label, opt_bd)):
+        for sc, bd in ((base_label, base_bd), (label, opt_bd)):
             cats.append(f"L{line}·{sc}")
             parts["Prod."].append(bd[line]["prod"])
             parts["Changeover"].append(bd[line]["changeover"])
@@ -661,6 +677,282 @@ def stacked_hours(base_bd, opt_bd, label=""):
     return fig
 
 
+def scenario_total(ctx, individual, mode, hdi_mass, prior_alpha):
+    previous = (
+        ctx.changeover_mode,
+        ctx.changeover_hdi_mass,
+        ctx.changeover_prior_alpha,
+    )
+    set_changeover_policy(
+        ctx, mode=mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
+    )
+    bd = breakdown(ctx, individual)
+    total = sum(bd[l]["total"] for l in LINES)
+    set_changeover_policy(
+        ctx,
+        mode=previous[0],
+        hdi_mass=previous[1],
+        prior_alpha=previous[2],
+    )
+    return total, bd
+
+
+def _safe_div(num, den, default=np.nan):
+    return float(num / den) if den and np.isfinite(den) else float(default)
+
+
+def _weighted_average(df, value_col, weight_col):
+    if value_col not in df or weight_col not in df:
+        return float("nan")
+    values = pd.to_numeric(df[value_col], errors="coerce")
+    weights = pd.to_numeric(df[weight_col], errors="coerce")
+    valid = values.notna() & weights.gt(0)
+    if not valid.any():
+        return float("nan")
+    return float((values[valid] * weights[valid]).sum() / weights[valid].sum())
+
+
+def _volumes_by_line_sku(df, value_col):
+    if df.empty or value_col not in df:
+        return {}
+    return {
+        (str(line), str(sku)): float(volume)
+        for line, sku, volume in (
+            df.groupby(["tren", "sku"], as_index=False)[value_col].sum()
+            [["tren", "sku", value_col]]
+            .itertuples(index=False, name=None)
+        )
+        if pd.notna(volume) and float(volume) > 0
+    }
+
+
+def _line_sku_volume(volume_map, line, sku, fallback=None):
+    if (line, sku) in volume_map:
+        return float(volume_map[(line, sku)])
+    if fallback is not None:
+        return float(fallback.get(sku, 0.0))
+    return 0.0
+
+
+def scenario_oee(bd):
+    prod = sum(v["prod"] for v in bd.values())
+    total = sum(v["total"] for v in bd.values())
+    return _safe_div(prod, total, 0.0)
+
+
+def enrich_model_breakdown(bd):
+    enriched = {}
+    for line, vals in bd.items():
+        vals = dict(vals)
+        vals["oee"] = _safe_div(vals["prod"], vals["total"], 0.0)
+        enriched[line] = vals
+    return enriched
+
+
+def simulate_line_with_volumes(ctx, line, sequence, volume_map, *, observed_oee=None):
+    prod = sum(
+        _line_sku_volume(volume_map, line, sku, ctx.volumes) / throughput_rate(ctx, sku, line)
+        for sku in sequence
+    )
+    if observed_oee is not None and np.isfinite(observed_oee) and observed_oee > 0:
+        total = prod / observed_oee
+        return {
+            "prod": prod,
+            "changeover": max(0.0, total - prod),
+            "startup": 0.0,
+            "total": total,
+            "oee": float(observed_oee),
+        }
+
+    co = sum(
+        changeover_hours(ctx, sequence[i], sequence[i + 1], line)
+        for i in range(len(sequence) - 1)
+    )
+    startup = STARTUP_HOURS[line] if sequence else 0.0
+    total = prod + co + startup
+    return {
+        "prod": prod,
+        "changeover": co,
+        "startup": startup,
+        "total": total,
+        "oee": _safe_div(prod, total, 0.0),
+    }
+
+
+def breakdown_from_sequences(ctx, sequences, volume_map, *, oee_by_line=None):
+    return {
+        line: simulate_line_with_volumes(
+            ctx, line, sequences.get(line, []), volume_map,
+            observed_oee=None if oee_by_line is None else oee_by_line.get(line),
+        )
+        for line in LINES
+    }
+
+
+def real_oee_by_line(df_real):
+    return {
+        line: _weighted_average(df_real[df_real["tren"] == line], "oee", "hl_real")
+        for line in LINES
+    }
+
+
+def scenario_totals(bd):
+    return {
+        "prod": sum(v["prod"] for v in bd.values()),
+        "total": sum(v["total"] for v in bd.values()),
+        "oee": scenario_oee(bd),
+    }
+
+
+def context_for_plan_week(ctx, df_plan, df_real):
+    weekly = planned_demand_from_planificado(df_plan).copy()
+    first_dates = df_plan.groupby("sku")["start_ts"].min().rename("first_fecha")
+    weekly = weekly.merge(first_dates, on="sku", how="left")
+    weekly["original_line"] = weekly["tren"].astype(str)
+
+    skus = weekly["sku"].astype(str).tolist()
+    volumes = dict(zip(weekly["sku"], pd.to_numeric(weekly["hl_total"], errors="coerce")))
+    volumes = {str(k): float(v) for k, v in volumes.items() if pd.notna(v)}
+
+    sku_format = dict(ctx.sku_format)
+    for sku in set(skus) | set(df_real["sku"].astype(str).tolist()):
+        sku_format.setdefault(sku, parse_format(sku))
+
+    original_lines = (
+        df_plan.groupby("sku")["tren"]
+        .agg(lambda values: sorted({str(v) for v in values if str(v) in LINES}))
+        .to_dict()
+    )
+    eligible = dict(ctx.eligible)
+    fallback_skus = set(ctx.fallback_skus)
+    for sku in skus:
+        fmt = sku_format.get(sku, parse_format(sku))
+        historical = [
+            line for line in LINES
+            if fmt in PHYSICAL_FORMAT_BY_LINE[line] and (sku, line) in ctx.hist_pairs
+        ]
+        if historical:
+            eligible[sku] = historical
+            continue
+
+        planned_lines = [
+            line for line in original_lines.get(sku, [])
+            if fmt in PHYSICAL_FORMAT_BY_LINE.get(line, set())
+        ]
+        if planned_lines:
+            eligible[sku] = planned_lines
+        else:
+            eligible[sku] = [line for line in LINES if fmt in PHYSICAL_FORMAT_BY_LINE[line]]
+        fallback_skus.add(sku)
+
+    return replace(
+        ctx,
+        weekly=weekly,
+        skus=skus,
+        volumes=volumes,
+        sku_format=sku_format,
+        eligible=eligible,
+        fallback_skus=list(fallback_skus),
+    )
+
+
+def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None):
+    rows = []
+    for line in LINES:
+        cursor = STARTUP_HOURS[line]
+        if sequences.get(line):
+            rows.append({
+                "line": f"L{line}", "task": "ARRANQUE", "sku": "_arr",
+                "start_h": 0.0, "end_h": STARTUP_HOURS[line],
+                "duration_h": STARTUP_HOURS[line], "type": "startup",
+                "format": "", "hl": 0.0, "rate_hl_per_h": 0.0,
+            })
+        prev = None
+        for sku in sequences.get(line, []):
+            if prev is not None:
+                co = changeover_hours(ctx, prev, sku, line)
+                if co > 0:
+                    rows.append({
+                        "line": f"L{line}", "task": f"CO {prev}→{sku}",
+                        "sku": sku, "start_h": cursor, "end_h": cursor + co,
+                        "duration_h": co, "type": "changeover",
+                        "format": ctx.sku_format.get(sku, ""),
+                        "hl": 0.0, "rate_hl_per_h": 0.0,
+                    })
+                    cursor += co
+            hl = _line_sku_volume(volume_map, line, sku, ctx.volumes)
+            rate = throughput_rate(ctx, sku, line)
+            prod_h = hl / rate if rate else 0.0
+            rows.append({
+                "line": f"L{line}", "task": sku, "sku": sku,
+                "start_h": cursor, "end_h": cursor + prod_h,
+                "duration_h": prod_h, "type": "production",
+                "format": ctx.sku_format.get(sku, ""),
+                "hl": hl, "rate_hl_per_h": rate,
+            })
+            cursor += prod_h
+            prev = sku
+
+    if not rows:
+        return go.Figure()
+
+    gantt = pd.DataFrame(rows)
+    colors = {"changeover": "#d62728", "startup": "#bdbdbd"}
+    fig = go.Figure()
+    for _, r in gantt.iterrows():
+        c = colors.get(r["type"], FMT_COLOR.get(r["format"], "#999"))
+        hover = f"<b>{r['task']}</b><br>Inicio: {r['start_h']:.1f}h<br>Duración: {r['duration_h']:.2f}h"
+        if r["type"] == "production":
+            hover += f"<br>HL: {r['hl']:,.0f}<br>Throughput: {r['rate_hl_per_h']:.0f} HL/h"
+        fig.add_trace(go.Bar(
+            x=[r["duration_h"]], y=[r["line"]], base=r["start_h"], orientation="h",
+            marker=dict(color=c, line=dict(color="black", width=0.3)),
+            text=r["task"] if r["type"] == "production" and r["duration_h"] >= 2 else "",
+            textposition="inside", insidetextanchor="middle",
+            hovertemplate=hover + "<extra></extra>", showlegend=False,
+        ))
+    cap = cap or max(max(HOURS_PER_WEEK.values()), float(gantt["end_h"].max())) + 5
+    for line in LINES:
+        fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
+    fig.update_layout(
+        barmode="stack", title=title, xaxis_title="Horas",
+        yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
+        height=300, margin=dict(l=50, r=15, t=35, b=20), plot_bgcolor="white",
+    )
+    fig.update_xaxes(gridcolor="#eee", range=[0, cap])
+    return fig
+
+
+def metric_card(title, value, detail="", accent="#2ca02c"):
+    st.markdown(
+        f"""
+        <div style="border-left: 4px solid {accent}; padding: 0.55rem 0.7rem;
+                    background: rgba(255,255,255,0.04); border-radius: 6px;
+                    min-height: 86px;">
+            <div style="font-size: 0.78rem; opacity: 0.72; margin-bottom: 0.2rem;">{title}</div>
+            <div style="font-size: 1.28rem; font-weight: 700;">{value}</div>
+            <div style="font-size: 0.78rem; opacity: 0.75;">{detail}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(show_spinner="Cargando plan y real 2026…")
+def get_2026_execution_data():
+    df_plan = load_planificado_producciones(
+        RAW_DIR / "Planificado - producciones 14 - 17 - 19.xlsx",
+        start_date=WEEK_START_2026,
+        end_date=WEEK_END_2026,
+    )
+    df_real = load_real_production_week(
+        RAW_DIR / "Produccion_L14,17,19_18-22.xlsx",
+        start_date=WEEK_START_2026,
+        end_date=WEEK_END_2026,
+    )
+    return df_plan, df_real
+
+
 def clean_urgent(urgent_df):
     orders = []
     for _, row in urgent_df.iterrows():
@@ -672,7 +964,7 @@ def clean_urgent(urgent_df):
             "sku": sku,
             "linea": None if pd.isna(row.get("linea")) or str(row.get("linea")) in {"", "Auto"} else str(row["linea"]),
             "hl_total": None if pd.isna(row.get("hl_total")) or float(row["hl_total"]) <= 0 else float(row["hl_total"]),
-            "latest_position": None if pd.isna(row.get("latest_position")) or int(row["latest_position"]) <= 0 else int(row["latest_position"]),
+            "latest_position": None,
         })
     return orders
 
@@ -797,10 +1089,44 @@ if page == "Aprendizaje 2025":
 # ═══════════════════════ PAGE 2: 2026 ═══════════════════════
 else:
     st.title("Optimización · 18-22 May 2026")
-    st.caption("Elige optimizador, añade urgencias, visualiza el plan.")
+    st.caption("Planner teórico, producción real ejecutada y propuesta AI comparados con la misma lógica operativa.")
+
+    df_plan_2026, df_real_2026 = get_2026_execution_data()
+    planner_ind = planned_sequences_from_planificado(df_plan_2026)
+    real_ind = actual_sequences_from_production(df_real_2026)
+    planner_volumes = _volumes_by_line_sku(df_plan_2026, "hl_plan")
+    real_volumes = _volumes_by_line_sku(df_real_2026, "hl_real")
+    real_oee_lines = real_oee_by_line(df_real_2026)
+    opt_ctx = context_for_plan_week(ctx, df_plan_2026, df_real_2026)
 
     algo = st.sidebar.selectbox("Algoritmo", ["GA (Genético)", "SA (Enfriamiento simulado)"], key="algo")
     with st.sidebar:
+        st.divider()
+        st.caption("Changeovers 2025")
+        co_policy_options = {
+            "Media bayesiana": "bayes_mean",
+            "Media observada": "observed_mean",
+            "HDI inferior": "hdi_lower",
+            "HDI superior": "hdi_upper",
+        }
+        co_policy_label = st.selectbox(
+            "Valor usado por el optimizador",
+            list(co_policy_options.keys()),
+            key="co_policy",
+        )
+        hdi_pct = st.slider("HDI", 80, 99, 95, 1, key="co_hdi_pct")
+        prior_alpha = st.slider(
+            "Fuerza prior",
+            1.1, 8.0, 2.0, 0.1,
+            help="Prior Gamma sobre la tasa exponencial; 2.0 equivale a una observación previa cercana a la media de línea.",
+            key="co_prior_alpha",
+        )
+        co_mode = co_policy_options[co_policy_label]
+        hdi_mass = hdi_pct / 100.0
+        set_changeover_policy(
+            opt_ctx, mode=co_mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
+        )
+        st.divider()
         if algo == "GA (Genético)":
             ga_pop = st.slider("Población", 20, 200, 60, 10, key="ga_pop")
             ga_gen = st.slider("Generaciones", 30, 400, 150, 10, key="ga_gen")
@@ -810,38 +1136,45 @@ else:
             sa_seed = st.number_input("Seed SA", 42, step=1, key="sa_seed")
 
     run_btn = st.sidebar.button("▶ Optimizar", type="primary", use_container_width=True, key="run_opt")
+    planner_bd = breakdown_from_sequences(opt_ctx, planner_ind, planner_volumes)
+    real_bd = breakdown_from_sequences(opt_ctx, real_ind, real_volumes, oee_by_line=real_oee_lines)
+    planner_totals = scenario_totals(planner_bd)
+    real_totals = scenario_totals(real_bd)
+    real_oee_global = _weighted_average(df_real_2026, "oee", "hl_real")
 
     with st.expander("📦 Órdenes urgentes", expanded=False):
         urgent_df = st.data_editor(
             pd.DataFrame([{"active": False, "order_id": "URG-01", "sku": "EX1324NB",
-                           "linea": "Auto", "hl_total": 200.0, "latest_position": 3}]),
+                           "linea": "Auto", "hl_total": 200.0}]),
             num_rows="dynamic", key="urgent_editor",
             column_config={
-                "active": st.column_config.CheckboxColumn("Activa"),
-                "sku": st.column_config.SelectboxColumn("SKU", options=ctx.skus, required=False),
-                "linea": st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
-                "hl_total": st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
-                "latest_position": st.column_config.NumberColumn("Posición", min_value=0, step=1),
+                "active":    st.column_config.CheckboxColumn("Activa"),
+                "order_id":  st.column_config.TextColumn("ID orden"),
+                "sku":       st.column_config.SelectboxColumn("SKU", options=opt_ctx.skus, required=False),
+                "linea":     st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
+                "hl_total":  st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
             },
         )
         urgent_orders = clean_urgent(urgent_df) if not urgent_df.empty else []
 
-    result_key = f"res_{algo}"
+    result_key = f"res_{algo}_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
     if run_btn or result_key not in st.session_state:
         # Apply urgent orders: extra volume + priority
         original_priority = list(ga_mod.PRIORITY_ORDERS)
         volumes_backup = {}
+        urgent_extra: dict = {}
         if urgent_orders:
             extra = []
             for o in urgent_orders:
                 sku = o["sku"]
                 if o["hl_total"] is not None:
-                    volumes_backup.setdefault(sku, ctx.volumes.get(sku, 0))
-                    ctx.volumes[sku] = volumes_backup[sku] + o["hl_total"]
+                    volumes_backup.setdefault(sku, opt_ctx.volumes.get(sku, 0))
+                    opt_ctx.volumes[sku] = volumes_backup[sku] + o["hl_total"]
+                    urgent_extra[sku] = o["hl_total"]
                 if o["linea"] is not None:
                     extra.append((sku, o["linea"]))
                 else:
-                    for line in ctx.eligible.get(sku, LINES):
+                    for line in opt_ctx.eligible.get(sku, LINES):
                         extra.append((sku, line))
             ga_mod.PRIORITY_ORDERS = original_priority + extra
 
@@ -851,21 +1184,21 @@ else:
                 def cb(g, b, m):
                     progress.progress((g+1)/ga_gen, text=f"G {g+1}/{ga_gen} · mejor={b:.1f}h")
                 t0 = time.time()
-                best_ind, history = evolve(ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
-                st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0}
+                best_ind, history = evolve(opt_ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
+                st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0, "urgent_extra": urgent_extra}
             else:
                 def cb(n, best, _):
                     progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
-                res = run_sa(ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
-                st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"]}
+                res = run_sa(opt_ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
+                st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"], "urgent_extra": urgent_extra}
             # Urgent orders feedback (shown right after optimization)
-            active_urgent = [o for o in urgent_orders if o["linea"] is not None or ctx.eligible.get(o["sku"], [])]
+            active_urgent = [o for o in urgent_orders if o["linea"] is not None or opt_ctx.eligible.get(o["sku"], [])]
             if active_urgent:
                 opt_ind_latest = st.session_state[result_key]["schedule"]
                 urgent_rows = []
                 for o in active_urgent:
                     sku = o["sku"]
-                    lines = [o["linea"]] if o["linea"] else ctx.eligible.get(sku, [])
+                    lines = [o["linea"]] if o["linea"] else opt_ctx.eligible.get(sku, [])
                     for ln in lines:
                         seq = opt_ind_latest.get(ln, [])
                         if sku in seq:
@@ -881,21 +1214,99 @@ else:
         finally:
             ga_mod.PRIORITY_ORDERS = original_priority
             for sku, orig_val in volumes_backup.items():
-                ctx.volumes[sku] = orig_val
+                opt_ctx.volumes[sku] = orig_val
         progress.empty()
 
     result = st.session_state[result_key]
     opt_ind = result["schedule"]
-    opt_bd = breakdown(ctx, opt_ind)
-    opt_total = sum(opt_bd[l]["total"] for l in LINES)
-    saved = baseline_total - opt_total
-    an = algo.split(" ")[0]
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Plan empresa", f"{baseline_total:.1f}h")
-    c2.metric(f"{an}", f"{opt_total:.1f}h", delta=f"{-saved:.1f}h", delta_color="inverse")
-    c3.metric("Ahorro", f"{saved:+.1f}h", delta=f"{saved/baseline_total*100:+.1f}%")
-    c4.metric("Tiempo", f"{result['elapsed']:.1f}s")
+    _urgent_extra = result.get("urgent_extra", {})
+    if _urgent_extra:
+        _ai_vols = dict(opt_ctx.volumes)
+        for _sku, _extra in _urgent_extra.items():
+            _ai_vols[_sku] = _ai_vols.get(_sku, 0) + _extra
+        ai_ctx = replace(opt_ctx, volumes=_ai_vols)
+    else:
+        ai_ctx = opt_ctx
+
+    opt_bd = enrich_model_breakdown(breakdown(ai_ctx, opt_ind))
+    opt_total = sum(opt_bd[l]["total"] for l in LINES)
+    saved = real_totals["total"] - opt_total
+    an = algo.split(" ")[0]
+    min_total, min_bd = scenario_total(ai_ctx, opt_ind, "hdi_lower", hdi_mass, prior_alpha)
+    worst_total, worst_bd = scenario_total(ai_ctx, opt_ind, "hdi_upper", hdi_mass, prior_alpha)
+    min_bd = enrich_model_breakdown(min_bd)
+    worst_bd = enrich_model_breakdown(worst_bd)
+    opt_oee = scenario_oee(opt_bd)
+    oee_delta = opt_oee - real_oee_global
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Real ejecutado", f"{real_totals['total']:.1f}h")
+    c2.metric("Óptimo", f"{opt_total:.1f}h",
+              delta=f"{opt_total - real_totals['total']:.1f}h vs real",
+              delta_color="inverse")
+    c3.metric("Reducción", f"{saved:.1f}h", delta=f"{saved/real_totals['total']*100:.1f}%")
+    c4.metric("Minimum Execution", f"{min_total:.1f}h")
+    c5.metric("Worst Execution", f"{worst_total:.1f}h")
+    o1, o2, o3, o4 = st.columns(4)
+    o1.metric("Planner teórico", f"{planner_totals['total']:.1f}h")
+    o2.metric("OEE global real", f"{real_oee_global*100:.1f}%")
+    o3.metric("OEE global Óptimo", f"{opt_oee*100:.1f}%", delta=f"{oee_delta*100:+.1f} pp vs real")
+    o4.metric("Tiempo optimización", f"{result['elapsed']:.1f}s")
+    st.caption(
+        "Planner teórico mostrado como escenario ideal de referencia; "
+        "la reducción principal compara Óptimo contra la producción real ejecutada."
+    )
+
+    st.subheader("Dinámica de mejora por línea")
+    _ll = [f"L{l}" for l in LINES]
+    _real_h = [real_bd[l]["total"] for l in LINES]
+    _opt_h  = [opt_bd[l]["total"]  for l in LINES]
+    _colors  = [LINE_COLOR[l] for l in LINES]
+
+    _fig_dyn = go.Figure()
+    _fig_dyn.add_trace(go.Bar(
+        name="Real ejecutado", x=_ll, y=_real_h,
+        marker=dict(color=_colors, opacity=0.35, line=dict(color=_colors, width=1.5)),
+        text=[f"{h:.0f}h" for h in _real_h], textposition="outside",
+        hovertemplate="%{x} Real: %{y:.1f}h<extra></extra>",
+    ))
+    _fig_dyn.add_trace(go.Bar(
+        name="Óptimo", x=_ll, y=_opt_h,
+        marker=dict(color=_colors, opacity=0.90, line=dict(color=_colors, width=1.5)),
+        text=[f"{h:.0f}h" for h in _opt_h], textposition="outside",
+        hovertemplate="%{x} Óptimo: %{y:.1f}h<extra></extra>",
+    ))
+    for i, l in enumerate(LINES):
+        _fig_dyn.add_shape(
+            type="line", xref="x", yref="y",
+            x0=i - 0.4, x1=i + 0.4,
+            y0=HOURS_PER_WEEK[l], y1=HOURS_PER_WEEK[l],
+            line=dict(color="red", dash="dash", width=2),
+        )
+        _ls = real_bd[l]["total"] - opt_bd[l]["total"]
+        _fig_dyn.add_annotation(
+            x=f"L{l}", y=max(_real_h[i], _opt_h[i]) + 8,
+            text=f"{'−' if _ls > 0 else '+'}{abs(_ls):.0f}h",
+            showarrow=False,
+            font=dict(size=13, color="#2ca02c" if _ls > 0 else "#d62728"),
+        )
+    _fig_dyn.update_layout(
+        barmode="group", height=300, plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(l=40, r=10, t=30, b=20),
+        yaxis=dict(gridcolor="#eee", title="Horas"),
+    )
+    st.plotly_chart(_fig_dyn, use_container_width=True, key="dyn_chart")
+
+    _oee_cols = st.columns(3)
+    for idx, l in enumerate(LINES):
+        _oee_delta = opt_bd[l]["oee"] - real_bd[l]["oee"]
+        _oee_cols[idx].metric(
+            f"OEE L{l}",
+            f"{opt_bd[l]['oee']*100:.1f}%",
+            delta=f"{_oee_delta*100:+.1f} pp vs real",
+        )
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
 
@@ -903,9 +1314,8 @@ else:
     cg1, cg2, cg3 = st.columns(3)
     for idx, line in enumerate(LINES):
         with [cg1, cg2, cg3][idx]:
-            # Show ALL nodes and edges from week 53; highlight only optimized ones
             ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
+            ef["weight"] = ef.apply(lambda r: changeover_hours(opt_ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
             fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
                                     path_edges=opt_path.get(line, []),
@@ -913,19 +1323,84 @@ else:
                                     pos=global_pos.get(line))
             components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
 
-    g1, g2 = st.columns(2)
-    with g1:
-        st.subheader("Plan del planner")
-        st.plotly_chart(gantt_figure(ctx, base_ind), key="base_g")
-    with g2:
-        st.subheader(f"{an} optimizado")
-        st.plotly_chart(gantt_figure(ctx, opt_ind, title=f"{an} optimizado"), key="opt_g")
+    gantt_cap = max(
+        max(v["total"] for v in planner_bd.values()),
+        max(v["total"] for v in real_bd.values()),
+        max(v["total"] for v in opt_bd.values()),
+        max(HOURS_PER_WEEK.values()),
+    ) + 10
+
+    st.subheader("Planner teórico")
+    st.plotly_chart(
+        gantt_figure_from_sequences(
+            opt_ctx, planner_ind, planner_volumes, title="", cap=gantt_cap,
+        ),
+        key="planner_g", use_container_width=True,
+    )
+
+    st.subheader("Real ejecutado")
+    st.plotly_chart(
+        gantt_figure_from_sequences(
+            opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap,
+        ),
+        key="real_g", use_container_width=True,
+    )
+
+    # ── Comparativa Real vs AI ───────────────────────────────────────────────
+    avail_total = sum(HOURS_PER_WEEK[l] for l in LINES)
+    real_prod_t = sum(real_bd[l]["prod"] for l in LINES)
+    real_dead_t = real_totals["total"] - real_prod_t
+    opt_prod_t  = sum(opt_bd[l]["prod"] for l in LINES)
+    opt_dead_t  = opt_total - opt_prod_t
+
+    st.subheader("Real ejecutado vs Óptimo")
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("Total horas · Real", f"{real_totals['total']:.1f}h")
+    h2.metric("Total horas · Óptimo", f"{opt_total:.1f}h",
+              delta=f"{opt_total - real_totals['total']:.1f}h vs real",
+              delta_color="inverse")
+    h3.metric("Horas muertas · Real",
+              f"{real_dead_t:.1f}h",
+              delta=f"{real_dead_t / max(real_totals['total'], 1) * 100:.0f}% del total",
+              delta_color="off")
+    h4.metric("Horas muertas · Óptimo",
+              f"{opt_dead_t:.1f}h",
+              delta=f"{opt_dead_t - real_dead_t:.1f}h vs real",
+              delta_color="inverse")
+    st.caption(f"Horas disponibles totales (3 líneas): {avail_total:.0f}h")
+    comp_rows = [
+        {
+            "Línea": f"L{l}",
+            "Total Real": f"{real_bd[l]['total']:.1f}h",
+            "Muertas Real": f"{real_bd[l]['total'] - real_bd[l]['prod']:.1f}h",
+            "Total Óptimo": f"{opt_bd[l]['total']:.1f}h",
+            "Muertas Óptimo": f"{opt_bd[l]['total'] - opt_bd[l]['prod']:.1f}h",
+            "Disponible": f"{HOURS_PER_WEEK[l]:.0f}h",
+        }
+        for l in LINES
+    ]
+    st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+    # ────────────────────────────────────────────────────────────────────────
+
+    st.subheader("Óptimo")
+    st.plotly_chart(
+        gantt_figure(ai_ctx, opt_ind, title="", cap=gantt_cap),
+        key="opt_g", use_container_width=True,
+    )
 
     mc1, mc2 = st.columns(2)
-    mc1.plotly_chart(stacked_hours(base_bd, opt_bd, an), key="stacked")
+    mc1.plotly_chart(stacked_hours(real_bd, opt_bd, "Óptimo", base_label="Real"), key="stacked")
     with mc2:
-        rows = [{"Línea": f"L{l}", "Plan": f"{base_bd[l]['total']:.1f}h",
-                  an: f"{opt_bd[l]['total']:.1f}h",
-                  "Ahorro": f"{base_bd[l]['total']-opt_bd[l]['total']:+.1f}h",
-                  "OK": "✓" if opt_bd[l]["total"] <= HOURS_PER_WEEK[l] else "✗"} for l in LINES]
+        rows = [{
+            "Línea": f"L{l}",
+            "Planner": f"{planner_bd[l]['total']:.1f}h",
+            "Real": f"{real_bd[l]['total']:.1f}h",
+            "Óptimo": f"{opt_bd[l]['total']:.1f}h",
+            "Min": f"{min_bd[l]['total']:.1f}h",
+            "Worst": f"{worst_bd[l]['total']:.1f}h",
+            "Δ vs real": f"{real_bd[l]['total']-opt_bd[l]['total']:+.1f}h",
+            "OEE real": f"{real_bd[l]['oee']*100:.1f}%",
+            "OEE Óptimo": f"{opt_bd[l]['oee']*100:.1f}%",
+            "OK": "✓" if opt_bd[l]["total"] <= HOURS_PER_WEEK[l] else "✗",
+        } for l in LINES]
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
