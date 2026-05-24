@@ -13,9 +13,10 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from bokeh.embed import file_html
-from bokeh.models import ColumnDataSource, HoverTool
+from bokeh.layouts import column as bk_column, row as bk_row
+from bokeh.models import Button, ColumnDataSource, CustomJS, Div, HoverTool, Slider, Span
 from bokeh.plotting import figure
-from bokeh.resources import INLINE
+from bokeh.resources import CDN
 
 import ga_optimizer as ga_mod
 from ga_optimizer import (
@@ -57,6 +58,356 @@ def load_frames_2025():
     spots["prev_sku"] = spots["prev_sku"].astype(str)
     spots["next_sku"] = spots["next_sku"].astype(str)
     return frames, nodes, spots
+
+
+def load_historical_gantt():
+    """Load historical 2025 production orders for the Gantt timeline.
+    Adds week_idx (1..53) and end datetime per order."""
+    df = pd.read_csv(CLEAN_DIR / "historical_weeks.csv",
+                     dtype={"line": str, "sku": str, "of": str})
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df["week_start"] = pd.to_datetime(df["week_start"])
+    # Map sorted unique week_start → 1..53 (aligned with frames_2025 week numbering)
+    week_map = {ws: i + 1 for i, ws in enumerate(sorted(df["week_start"].unique()))}
+    df["week_idx"] = df["week_start"].map(week_map)
+    df["end"] = df["fecha"] + pd.to_timedelta(df["h_tot"], unit="h")
+    df = df.sort_values(["line", "fecha"]).reset_index(drop=True)
+    return df
+
+
+def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days,
+                              spot_skus, spot_set, global_pos, ctx, initial_day,
+                              node_class):
+    """Single Bokeh dashboard: sliding-window Gantt + 3 graphs sharing ONE slider+play.
+    All animation is client-side via CustomJS — fluid and stays connected."""
+    day_zero_ms = int(pd.Timestamp(day_zero).value // 1_000_000)
+    ms_per_day = 86_400_000
+    WINDOW_DAYS = 42   # visible width of the Gantt: 6 weeks
+    LEAD_DAYS = 21     # cursor centered (3 weeks back, 3 weeks ahead)
+
+    cursor_ms = day_zero_ms + (initial_day - 1) * ms_per_day
+    initial_week = max(1, min(53, (initial_day - 1) // 7 + 1))
+
+    # ════════════════════════════ GANTT ════════════════════════════
+    lines_y = [f"L{l}" for l in LINES]
+    p_gantt = figure(
+        x_axis_type="datetime",
+        y_range=lines_y[::-1],
+        height=240, sizing_mode="stretch_width",
+        tools="pan,wheel_zoom,reset,save",
+        active_scroll="wheel_zoom",
+        background_fill_color="#FAFBFC", border_fill_color="white",
+        toolbar_location="right",
+        title="Producción 2025 — flujo deslizante",
+    )
+    p_gantt.ygrid.grid_line_color = None
+    p_gantt.xgrid.grid_line_color = "#f0f0f0"
+    p_gantt.outline_line_color = None
+    p_gantt.yaxis.major_label_text_font_style = "bold"
+    p_gantt.title.text_font_size = "11pt"
+
+    initial_x_end = cursor_ms + LEAD_DAYS * ms_per_day
+    initial_x_start = initial_x_end - WINDOW_DAYS * ms_per_day
+    p_gantt.x_range.start = initial_x_start
+    p_gantt.x_range.end = initial_x_end
+
+    df = gantt_df.sort_values("fecha").reset_index(drop=True).copy()
+    df["y"] = "L" + df["line"].astype(str)
+    df["color"] = df["line"].map(LINE_COLOR).fillna("#888888")
+    df["fecha_ms"] = (df["fecha"].astype("int64") // 1_000_000).astype("int64")
+    df["end_ms"] = (df["end"].astype("int64") // 1_000_000).astype("int64")
+    df["fecha_str"] = df["fecha"].dt.strftime("%Y-%m-%d %H:%M")
+    df["h_tot_str"] = df["h_tot"].map(lambda v: f"{v:.1f}h")
+    df["hl_str"] = df["hl"].map(lambda v: f"{v:,.0f}")
+    df["oee_str"] = df["oee"].map(lambda v: f"{v*100:.0f}%")
+    df["is_spot"] = df["sku"].isin(spot_skus)
+    df["line_color"] = np.where(df["is_spot"], "#8b0000", "#ffffff")
+    df["line_w"] = np.where(df["is_spot"], 1.5, 0.4)
+
+    initial_right = np.where(df["fecha_ms"] > cursor_ms,
+                              df["end_ms"],
+                              np.minimum(df["end_ms"], cursor_ms))
+    initial_alpha = np.where(df["fecha_ms"] > cursor_ms, 0.0, 0.9)
+    initial_visible_h = (initial_right - df["fecha_ms"]) / 3_600_000.0
+    initial_label = np.where((df["fecha_ms"] <= cursor_ms) & (initial_visible_h >= 12),
+                              df["sku"].values, "")
+    initial_label_x = ((df["fecha_ms"] + initial_right) / 2).astype("int64")
+
+    g_src = ColumnDataSource(dict(
+        left=df["fecha_ms"].tolist(),
+        right=initial_right.tolist(),
+        y=df["y"].tolist(),
+        color=df["color"].tolist(),
+        alpha=initial_alpha.tolist(),
+        end=df["end_ms"].tolist(),
+        line_color=df["line_color"].tolist(),
+        line_w=df["line_w"].tolist(),
+        label=initial_label.tolist(),
+        label_x=initial_label_x.tolist(),
+        sku=df["sku"].tolist(), of=df["of"].tolist(),
+        fecha=df["fecha_str"].tolist(), dur=df["h_tot_str"].tolist(),
+        hl=df["hl_str"].tolist(), oee=df["oee_str"].tolist(),
+    ))
+
+    gr = p_gantt.hbar(y="y", left="left", right="right", height=0.62,
+                       fill_color="color", fill_alpha="alpha",
+                       line_color="line_color", line_width="line_w",
+                       source=g_src)
+    p_gantt.add_tools(HoverTool(renderers=[gr], tooltips=[
+        ("SKU", "@sku"), ("OF", "@of"),
+        ("Inicio", "@fecha"), ("Duración", "@dur"),
+        ("HL", "@hl"), ("OEE", "@oee"),
+    ]))
+    p_gantt.text(x="label_x", y="y", text="label", source=g_src,
+                  text_font_size="9pt", text_align="center", text_baseline="middle",
+                  text_color="white", text_font_style="bold")
+
+    cursor = Span(location=cursor_ms, dimension="height",
+                  line_color="#e41a1c", line_dash="solid", line_width=3)
+    p_gantt.add_layout(cursor)
+
+    # ════════════════════════════ 3 GRAPHS ════════════════════════════
+    edge_sources, node_sources, graph_figs = [], [], []
+
+    for line in LINES:
+        line_edges = frames_df[frames_df["line"] == line]
+        edge_first = (line_edges.groupby(["prev_sku", "next_sku"])["week"]
+                                .min().reset_index().rename(columns={"week": "first_week"}))
+
+        line_nodes = nodes_df[nodes_df["line"] == line]
+        node_first = (line_nodes.groupby("sku")["week"]
+                                .min().reset_index().rename(columns={"week": "first_week"}))
+        latest_deg = (line_nodes.sort_values("week").groupby("sku")["degree"]
+                                 .last().reset_index())
+        node_first = node_first.merge(latest_deg, on="sku")
+        line_cls = node_class.get(line, {})
+
+        pos = global_pos.get(line, {})
+
+        # ── Edges ──
+        edge_xs, edge_ys, edge_first_w = [], [], []
+        edge_color, edge_w_base, edge_alpha_base = [], [], []
+        edge_pair, edge_weight_label = [], []
+        for _, row in edge_first.iterrows():
+            o, d = row["prev_sku"], row["next_sku"]
+            if o not in pos or d not in pos:
+                continue
+            edge_xs.append([pos[o][0], pos[d][0]])
+            edge_ys.append([pos[o][1], pos[d][1]])
+            is_spot = (o, d) in spot_set
+            edge_color.append("#d62728" if is_spot else "#5a5a5a")
+            try:
+                w_h = changeover_hours(ctx, o, d, line)
+            except Exception:
+                w_h = 1.0
+            base_w = max(0.4, min(3.5, 0.4 + w_h * 0.5))
+            edge_w_base.append(base_w if is_spot else base_w * 0.55)
+            edge_alpha_base.append(0.85 if is_spot else 0.28)
+            edge_first_w.append(int(row["first_week"]))
+            edge_pair.append(f"{o} → {d}")
+            edge_weight_label.append(f"{w_h:.2f}h")
+
+        n_e = len(edge_xs)
+        edge_alpha_init = [edge_alpha_base[i] if edge_first_w[i] <= initial_week else 0.0
+                           for i in range(n_e)]
+        edge_w_init = [edge_w_base[i] if edge_first_w[i] <= initial_week else 0.001
+                       for i in range(n_e)]
+
+        e_src = ColumnDataSource(dict(
+            xs=edge_xs, ys=edge_ys,
+            color=edge_color,
+            alpha_base=edge_alpha_base, alpha=edge_alpha_init,
+            w_base=edge_w_base, w=edge_w_init,
+            first_week=edge_first_w,
+            pair=edge_pair, weight=edge_weight_label,
+        ))
+        edge_sources.append(e_src)
+
+        # ── Nodes ──
+        node_x, node_y, node_first_w, node_sku_l, node_deg_l = [], [], [], [], []
+        node_color, node_alpha_base, node_size_base = [], [], []
+        node_stroke, node_stroke_w = [], []
+        for _, row in node_first.iterrows():
+            s = row["sku"]
+            if s not in pos:
+                continue
+            node_x.append(pos[s][0])
+            node_y.append(pos[s][1])
+            deg = float(row["degree"])
+            # Smaller nodes for cleaner visualization (range ~5-11px)
+            size = 5 + min(6, deg * 0.25)
+            cat = line_cls.get(s, "normal")
+            if cat == "blackspot":
+                node_color.append("#e41a1c")
+                node_stroke.append("#8b0000")
+                node_stroke_w.append(1.5)
+                node_alpha_base.append(0.95)
+            elif cat == "critical":
+                node_color.append("#ff7f0e")
+                node_stroke.append("#b35900")
+                node_stroke_w.append(1.0)
+                node_alpha_base.append(0.90)
+            else:
+                node_color.append("#4C78A8")
+                node_stroke.append("white")
+                node_stroke_w.append(0.6)
+                node_alpha_base.append(0.78)
+            node_size_base.append(size)
+            node_first_w.append(int(row["first_week"]))
+            node_sku_l.append(s)
+            node_deg_l.append(int(deg))
+
+        n_n = len(node_x)
+        node_alpha_init = [node_alpha_base[i] if node_first_w[i] <= initial_week else 0.0
+                           for i in range(n_n)]
+        node_size_init = [node_size_base[i] if node_first_w[i] <= initial_week else 0
+                          for i in range(n_n)]
+
+        n_src = ColumnDataSource(dict(
+            x=node_x, y=node_y,
+            color=node_color, stroke=node_stroke, stroke_w=node_stroke_w,
+            alpha_base=node_alpha_base, alpha=node_alpha_init,
+            size_base=node_size_base, size=node_size_init,
+            first_week=node_first_w,
+            sku=node_sku_l, degree=node_deg_l,
+        ))
+        node_sources.append(n_src)
+
+        pg = figure(
+            title=f"L{line}",
+            height=520, sizing_mode="scale_width",
+            x_axis_type=None, y_axis_type=None,
+            tools="pan,wheel_zoom,reset",
+            active_scroll="wheel_zoom",
+            background_fill_color="#FAFBFC", border_fill_color="white",
+            toolbar_location=None,
+            match_aspect=True,
+        )
+        pg.grid.visible = False
+        pg.outline_line_color = "#dddddd"
+        pg.title.text_font_size = "13pt"
+        pg.title.text_font_style = "bold"
+        pg.x_range.range_padding = 0.10
+        pg.y_range.range_padding = 0.10
+
+        edges_r = pg.multi_line("xs", "ys", source=e_src,
+                                 line_color="color", line_width="w",
+                                 line_alpha="alpha", line_join="round")
+        pg.add_tools(HoverTool(renderers=[edges_r], tooltips=[
+            ("Transición", "@pair"), ("Cambio", "@weight"),
+        ]))
+        nodes_r = pg.scatter("x", "y", source=n_src, size="size",
+                              fill_color="color", fill_alpha="alpha",
+                              line_color="stroke", line_width="stroke_w")
+        pg.add_tools(HoverTool(renderers=[nodes_r], tooltips=[
+            ("SKU", "@sku"), ("Conexiones", "@degree"),
+        ]))
+        graph_figs.append(pg)
+
+    # ════════════════════════════ SHARED CONTROLS ════════════════════════════
+    slider = Slider(start=1, end=total_days, value=initial_day, step=1,
+                    title="Día del año", sizing_mode="stretch_width", show_value=True)
+    play_btn = Button(label="▶", width=50, button_type="primary")
+    speed_slider = Slider(start=1, end=10, value=3, step=1,
+                          title="Velocidad (días/tick)", width=200)
+    week_label = Div(
+        text=f"<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Semana {initial_week}/53</b></div>",
+        width=140,
+    )
+
+    update_cb = CustomJS(args=dict(
+        g_src=g_src, cursor=cursor, x_range=p_gantt.x_range,
+        edge_srcs=edge_sources, node_srcs=node_sources,
+        week_label=week_label,
+        day_zero_ms=day_zero_ms, ms_per_day=ms_per_day,
+        window_days=WINDOW_DAYS, lead_days=LEAD_DAYS,
+    ), code="""
+        const day = cb_obj.value;
+        const cursor_ms = day_zero_ms + (day - 1) * ms_per_day;
+        const week = Math.min(53, Math.floor((day - 1) / 7) + 1);
+
+        // --- Gantt: cursor + sliding window ---
+        cursor.location = cursor_ms;
+        const win_end = cursor_ms + lead_days * ms_per_day;
+        x_range.start = win_end - window_days * ms_per_day;
+        x_range.end = win_end;
+
+        // --- Gantt: bar alpha + clipping ---
+        const d = g_src.data;
+        for (let i = 0; i < d.left.length; i++) {
+            if (d.left[i] > cursor_ms) {
+                d.alpha[i] = 0.0;
+                d.right[i] = d.end[i];
+                d.label[i] = "";
+            } else {
+                d.alpha[i] = 0.9;
+                const r_clip = Math.min(d.end[i], cursor_ms);
+                d.right[i] = r_clip;
+                const vh = (r_clip - d.left[i]) / 3600000.0;
+                d.label[i] = vh >= 12 ? d.sku[i] : "";
+                d.label_x[i] = (d.left[i] + r_clip) / 2;
+            }
+        }
+        g_src.change.emit();
+
+        // --- Graphs: edge + node visibility by first_week ---
+        for (let g = 0; g < edge_srcs.length; g++) {
+            const es = edge_srcs[g].data;
+            for (let i = 0; i < es.first_week.length; i++) {
+                if (es.first_week[i] <= week) {
+                    es.alpha[i] = es.alpha_base[i];
+                    es.w[i] = es.w_base[i];
+                } else {
+                    es.alpha[i] = 0.0;
+                    es.w[i] = 0.001;
+                }
+            }
+            edge_srcs[g].change.emit();
+
+            const ns = node_srcs[g].data;
+            for (let i = 0; i < ns.first_week.length; i++) {
+                if (ns.first_week[i] <= week) {
+                    ns.alpha[i] = ns.alpha_base[i];
+                    ns.size[i] = ns.size_base[i];
+                } else {
+                    ns.alpha[i] = 0.0;
+                    ns.size[i] = 0;
+                }
+            }
+            node_srcs[g].change.emit();
+        }
+
+        week_label.text = "<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Semana " + week + "/53</b></div>";
+    """)
+    slider.js_on_change("value", update_cb)
+
+    play_cb = CustomJS(args=dict(slider=slider, btn=play_btn, speed=speed_slider), code="""
+        if (window._gantt_interval) {
+            clearInterval(window._gantt_interval);
+            window._gantt_interval = null;
+            btn.label = "▶";
+            return;
+        }
+        btn.label = "⏸";
+        if (slider.value >= slider.end) slider.value = 1;
+        window._gantt_interval = setInterval(() => {
+            const next = slider.value + speed.value;
+            if (next >= slider.end) {
+                slider.value = slider.end;
+                clearInterval(window._gantt_interval);
+                window._gantt_interval = null;
+                btn.label = "▶";
+                return;
+            }
+            slider.value = next;
+        }, 50);
+    """)
+    play_btn.js_on_click(play_cb)
+
+    controls = bk_row(play_btn, slider, speed_slider, week_label,
+                       sizing_mode="stretch_width")
+    graphs_row = bk_row(*graph_figs, sizing_mode="stretch_width")
+    return bk_column(controls, p_gantt, graphs_row, sizing_mode="stretch_width")
 
 
 def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
@@ -335,6 +686,10 @@ def get_ctx():
 def get_frames():
     return load_frames_2025()
 
+@st.cache_resource(show_spinner="Cargando histórico para Gantt…")
+def get_gantt_history():
+    return load_historical_gantt()
+
 
 ctx = get_ctx()
 base_ind = baseline_individual(ctx)
@@ -344,11 +699,58 @@ frames_2025, nodes_2025, spots_2025 = get_frames()
 num_weeks = int(frames_2025["week"].max())
 spot_set = set(zip(spots_2025["prev_sku"], spots_2025["next_sku"]))
 spot_skus_set = set(p for pair in spot_set for p in pair)
+gantt_history = get_gantt_history()
+gantt_day_zero = pd.Timestamp(gantt_history["week_start"].min())
+gantt_total_days = num_weeks * 7
 
 
-@st.cache_resource(show_spinner="Calculando layout fijo…")
+@st.cache_resource(show_spinner="Construyendo dashboard interactivo…")
+def combined_dashboard_html(initial_day):
+    """Built ONCE: Gantt + 3 graphs + shared slider. All further interaction is JS."""
+    layout = build_combined_dashboard(
+        gantt_history, frames_2025, nodes_2025,
+        gantt_day_zero, gantt_total_days,
+        spot_skus_set, spot_set, global_pos, ctx,
+        initial_day=initial_day,
+        node_class=get_node_classification(),
+    )
+    return file_html(layout, CDN, "")
+
+
+@st.cache_resource(show_spinner="Clasificando nodos por aristas negativas…")
+def get_node_classification():
+    """Classify each (line, sku) by count of adjacent black-spot (negative) edges.
+    Returns {line: {sku: 'normal'|'critical'|'blackspot'}}.
+    Thresholds: 0 → normal, 1-2 → critical, ≥3 → blackspot."""
+    from collections import defaultdict
+    cls = {}
+    for line in LINES:
+        line_spots = spots_2025[spots_2025["line"].astype(str) == line]
+        spot_count = defaultdict(int)
+        for _, r in line_spots.iterrows():
+            spot_count[str(r["prev_sku"])] += 1
+            spot_count[str(r["next_sku"])] += 1
+        all_skus = set(nodes_2025[nodes_2025["line"] == line]["sku"].astype(str))
+        all_skus |= set(frames_2025[frames_2025["line"] == line]["prev_sku"].astype(str))
+        all_skus |= set(frames_2025[frames_2025["line"] == line]["next_sku"].astype(str))
+        line_cls = {}
+        for sku in all_skus:
+            c = spot_count.get(sku, 0)
+            if c >= 3:
+                line_cls[sku] = "blackspot"
+            elif c >= 1:
+                line_cls[sku] = "critical"
+            else:
+                line_cls[sku] = "normal"
+        cls[line] = line_cls
+    return cls
+
+
+@st.cache_resource(show_spinner="Calculando layout esférico…")
 def get_global_positions():
-    """Fixed spherical layout per line using all weeks."""
+    """Spherical (shell) layout per line: 3 concentric rings by category.
+    Inner ring = black spots, middle = critical, outer = normal."""
+    cls = get_node_classification()
     positions = {}
     for line in LINES:
         ef = frames_2025[frames_2025["line"] == line]
@@ -357,7 +759,17 @@ def get_global_positions():
             G.add_edge(row["prev_sku"], row["next_sku"])
         if G.number_of_nodes() == 0:
             continue
-        pos = nx.spring_layout(G, seed=42, k=3.0, iterations=100)
+        line_cls = cls.get(line, {})
+        nlist = [
+            [n for n in G.nodes() if line_cls.get(n) == "blackspot"],
+            [n for n in G.nodes() if line_cls.get(n) == "critical"],
+            [n for n in G.nodes() if line_cls.get(n) == "normal"],
+        ]
+        nlist = [s for s in nlist if s]
+        try:
+            pos = nx.shell_layout(G, nlist=nlist)
+        except Exception:
+            pos = nx.spring_layout(G, seed=42, k=3.0, iterations=200)
         positions[line] = pos
     return positions
 
@@ -368,55 +780,19 @@ page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026"], lab
 
 # ═══════════════════════ PAGE 1: 2025 ═══════════════════════
 if page == "Aprendizaje 2025":
-    st.title("Aprendizaje 2025 · Grafo de transiciones")
-    st.caption("Cada semana aparecen nuevas transiciones. Los nodos crecen con las conexiones. Rojo = black spot. ▶ reproduce la evolución.")
-
-    # ── Streamlit animation: state at top, advance at bottom after render ──
-    if "week_2025" not in st.session_state:
-        st.session_state.week_2025 = num_weeks
-    if "playing_2025" not in st.session_state:
-        st.session_state.playing_2025 = False
-
-    col_play, col_week = st.columns([1, 6])
-    with col_play:
-        btn_label = "⏸" if st.session_state.playing_2025 else "▶"
-        if st.button(btn_label, key="play_btn_25"):
-            was_playing = st.session_state.playing_2025
-            st.session_state.playing_2025 = not was_playing
-            if not was_playing:
-                st.session_state.week_2025 = 1
-            st.rerun()
-    with col_week:
-        week_idx = st.slider(
-            "Semana", 1, num_weeks,
-            value=st.session_state.week_2025,
-            disabled=st.session_state.playing_2025)
-        if not st.session_state.playing_2025:
-            st.session_state.week_2025 = week_idx
-
-    c1, c2, c3 = st.columns(3)
-    for idx, line in enumerate(LINES):
-        with [c1, c2, c3][idx]:
-            ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)].copy()
-            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
-            nf = nodes_2025[(nodes_2025["week"] == week_idx) & (nodes_2025["line"] == line)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
-                                    pos=global_pos.get(line))
-            components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
+    st.title("Operation Lab")
+    st.subheader("Generative Bayesian Graphs")
 
     mc1, mc2, mc3 = st.columns(3)
     mc1.metric("SKUs totales", nodes_2025["sku"].nunique())
-    mc2.metric("Transiciones", len(frames_2025[frames_2025["week"] == num_weeks]))
-    mc3.metric("Semanas", num_weeks)
+    mc2.metric("Transiciones únicas",
+               int(frames_2025.groupby(["line", "prev_sku", "next_sku"]).ngroups))
+    mc3.metric("Órdenes 2025", len(gantt_history))
 
-    # Advance AFTER all widgets have rendered so the user sees the frame
-    if st.session_state.playing_2025:
-        if st.session_state.week_2025 >= num_weeks:
-            st.session_state.playing_2025 = False
-        else:
-            st.session_state.week_2025 += 1
-            time.sleep(0.15)
-            st.rerun()
+    # Single combined dashboard: Gantt + 3 graphs sharing one slider+play (all client-side JS)
+    # Initial cursor at week 3 (day 21) so the user sees the start of the year with context.
+    components.html(combined_dashboard_html(initial_day=21),
+                    height=880, scrolling=False)
 
 # ═══════════════════════ PAGE 2: 2026 ═══════════════════════
 else:
@@ -535,7 +911,7 @@ else:
                                     path_edges=opt_path.get(line, []),
                                     highlight_nodes=set(opt_ind.get(line, [])),
                                     pos=global_pos.get(line))
-            components.html(file_html(fig, INLINE, ""), height=400, scrolling=False)
+            components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
 
     g1, g2 = st.columns(2)
     with g1:
