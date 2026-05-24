@@ -61,10 +61,11 @@ def load_frames_2025():
 
 def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
                       title="", path_edges=None, active_sku=None,
-                      heatmap=False, pos=None):
+                      pos=None, highlight_nodes=None):
     """Build a Bokeh directed graph for a line.
-    If heatmap=True, nodes are colored from cold (low degree) → hot (high degree).
+    3 categories: blackspot (red), critical/hub (orange), normal (blue).
     If pos provided, use fixed positions; otherwise compute with spring_layout.
+    If highlight_nodes is a set, only those nodes are shown in full color.
     """
     G = nx.DiGraph()
     for _, row in node_df.iterrows():
@@ -99,6 +100,9 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     else:
         has_weight = False
 
+    # Determine which edges are in the optimized path
+    path_set = set(path_edges) if path_edges else set()
+
     # Edges (normal + black spots) with weighted width
     edge_xs, edge_ys = [], []
     edge_w, edge_c, edge_a = [], [], []
@@ -107,19 +111,33 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
         o, d = row["prev_sku"], row["next_sku"]
         if o not in pos or d not in pos:
             continue
+        is_path = (o, d) in path_set
         edge_xs.append([pos[o][0], pos[d][0]])
         edge_ys.append([pos[o][1], pos[d][1]])
-        is_bs = (o, d) in black_spots
-        edge_c.append("#d62728" if is_bs else "#444444")
+        if is_path:
+            edge_c.append("#2ca02c")
+            edge_w.append(4.0)
+            edge_a.append(0.9)
+        elif highlight_nodes is not None:
+            # Non-path edge when highlighting: faint gray background
+            edge_c.append("#999999")
+            edge_w.append(0.5)
+            edge_a.append(0.12)
+        else:
+            is_bs = (o, d) in black_spots
+            edge_c.append("#d62728" if is_bs else "#444444")
+            if has_weight:
+                w = float(row["weight"])
+                wt = (w - wmin) / wr
+                edge_w.append(max(0.3, 0.3 + wt * 3.7))
+            else:
+                edge_w.append(2.5 if is_bs else 0.8)
+            edge_a.append(0.8 if is_bs else 0.25 + (edge_w[-1] / 4.0) * 0.5)
         if has_weight:
             w = float(row["weight"])
-            wt = (w - wmin) / wr
-            edge_w.append(max(0.3, 0.3 + wt * 3.7))
             edge_weight_label.append(f"{w:.2f}h")
         else:
-            edge_w.append(2.5 if is_bs else 0.8)
             edge_weight_label.append("")
-        edge_a.append(0.8 if is_bs else 0.25 + (edge_w[-1] / 4.0) * 0.5)
         edge_pair.append(f"{o} → {d}")
 
     if edge_xs:
@@ -135,26 +153,11 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             ("Cambio", "@weight"),
         ]))
 
-    # Path edges
-    if path_edges:
-        pxs, pys = [], []
-        for o, d in path_edges:
-            if o in pos and d in pos:
-                pxs.append([pos[o][0], pos[d][0]])
-                pys.append([pos[o][1], pos[d][1]])
-        if pxs:
-            p_src = ColumnDataSource(dict(xs=pxs, ys=pys))
-            p.multi_line("xs", "ys", source=p_src, line_color="#2ca02c", line_width=4, line_alpha=0.9)
+    # 3-category classification: black spot, critical (high degree), normal
+    deg_threshold = node_df["degree"].quantile(0.70) if len(node_df) > 0 else 0
+    CAT_COLORS = {"blackspot": "#e41a1c", "critical": "#ff7f0e", "normal": "#4C78A8"}
 
-    # Heatmap color range (degree cold → hot)
-    if heatmap and "degree" in node_df.columns and len(node_df) > 1:
-        dmin = node_df["degree"].min()
-        dmax = node_df["degree"].max()
-        drange = max(dmax - dmin, 1)
-    else:
-        heatmap = False
-
-    node_x, node_y, node_s, node_c, node_al = [], [], [], [], []
+    node_x, node_y, node_s, node_c, node_al, node_sc, node_sl = [], [], [], [], [], [], []
     spot_skus = set(p for pair in black_spots for p in pair)
     for _, row in node_df.iterrows():
         s = row["sku"]
@@ -162,29 +165,47 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             continue
         node_x.append(pos[s][0])
         node_y.append(pos[s][1])
-        sz = max(8, 8 + 28 * (row["degree"] / max_deg) ** 0.5)
+        if highlight_nodes is not None and s not in highlight_nodes:
+            sz = 6
+            cat = "normal"
+        else:
+            sz = 14  # same size for all active nodes
+            if s in spot_skus:
+                cat = "blackspot"
+            elif row["degree"] >= deg_threshold:
+                cat = "critical"
+            else:
+                cat = "normal"
         node_s.append(sz)
         if active_sku is not None and s == active_sku:
-            node_c.append("#ff7f0e")
-        elif s in spot_skus:
-            node_c.append("#d62728")
-        elif heatmap:
-            t = (row["degree"] - dmin) / drange
-            h = 240 - t * 240
-            r, g, b = colorsys.hsv_to_rgb(h / 360, 0.85, 0.92)
-            node_c.append(f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}")
+            node_c.append("#2ca02c")
+            node_al.append(0.95)
+            node_sc.append("#1a6b1a")
+            node_sl.append(2.0)
+        elif highlight_nodes is not None and s not in highlight_nodes:
+            node_c.append("#cccccc")
+            node_al.append(0.25)
+            node_sc.append("#eeeeee")
+            node_sl.append(0.5)
         else:
-            node_c.append("#4C78A8")
-        node_al.append(0.95 if s == active_sku else 0.85)
+            node_c.append(CAT_COLORS[cat])
+            node_al.append(0.85)
+            if cat == "blackspot":
+                node_sc.append("#8b0000")
+                node_sl.append(2.5)
+            else:
+                node_sc.append("white")
+                node_sl.append(1.0)
 
     if node_x:
         src_n = ColumnDataSource(dict(
             x=node_x, y=node_y, size=node_s, color=node_c, alpha=node_al,
+            stroke=node_sc, sw=node_sl,
             sku=node_df["sku"].tolist(), degree=node_df["degree"].tolist(),
         ))
         r = p.scatter("x", "y", source=src_n, size="size",
                        fill_color="color", fill_alpha="alpha",
-                       line_color="white", line_width=1.5)
+                       line_color="stroke", line_width="sw")
         p.add_tools(HoverTool(renderers=[r], tooltips=[
             ("SKU", "@sku"), ("Conexiones", "@degree"),
         ]))
@@ -323,7 +344,7 @@ spot_skus_set = set(p for pair in spot_set for p in pair)
 
 @st.cache_resource(show_spinner="Calculando layout fijo…")
 def get_global_positions():
-    """Fixed node positions per line using all weeks (avoids chaotic jumping)."""
+    """Fixed spherical layout per line using all weeks."""
     positions = {}
     for line in LINES:
         ef = frames_2025[frames_2025["line"] == line]
@@ -332,7 +353,7 @@ def get_global_positions():
             G.add_edge(row["prev_sku"], row["next_sku"])
         if G.number_of_nodes() == 0:
             continue
-        pos = nx.spring_layout(G, seed=42, k=0.85, iterations=80)
+        pos = nx.spring_layout(G, seed=42, k=3.0, iterations=100)
         positions[line] = pos
     return positions
 
@@ -375,7 +396,7 @@ if page == "Aprendizaje 2025":
             ef = frames_2025[(frames_2025["week"] == week_idx) & (frames_2025["line"] == line)].copy()
             ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["week"] == week_idx) & (nodes_2025["line"] == line)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True,
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
                                     pos=global_pos.get(line))
             components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
 
@@ -394,14 +415,14 @@ if page == "Aprendizaje 2025":
         cg1, cg2, cg3 = st.columns(3)
         for idx, line in enumerate(LINES):
             with [cg1, cg2, cg3][idx]:
-                skus_l = set(oi.get(line, []) + base_ind.get(line, []))
                 ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-                ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
                 ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
                 nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-                nf = nf[nf["sku"].isin(skus_l)]
-                fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True,
-                                        path_edges=opt_path.get(line,[]), pos=global_pos.get(line))
+                fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
+
+                                        path_edges=opt_path.get(line,[]),
+                                        highlight_nodes=set(oi.get(line, [])),
+                                        pos=global_pos.get(line))
                 components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
 
     # Advance AFTER all widgets have rendered so the user sees the frame
@@ -476,17 +497,17 @@ else:
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
 
-    # 3 Bokeh graphs (optimized path over historical network)
+    # 3 Bokeh graphs: full historical network with optimized path highlighted
     cg1, cg2, cg3 = st.columns(3)
     for idx, line in enumerate(LINES):
         with [cg1, cg2, cg3][idx]:
-            skus_l = set(opt_ind.get(line, []) + base_ind.get(line, []))
+            # Show ALL nodes and edges from week 53; highlight only optimized ones
             ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-            ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
             ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
             nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-            nf = nf[nf["sku"].isin(skus_l)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []),
+            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
+                                    path_edges=opt_path.get(line, []),
+                                    highlight_nodes=set(opt_ind.get(line, [])),
                                     pos=global_pos.get(line))
             components.html(file_html(fig, INLINE, ""), height=400, scrolling=False)
 
