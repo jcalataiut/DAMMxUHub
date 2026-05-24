@@ -100,9 +100,6 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     else:
         has_weight = False
 
-    # Determine which edges are in the optimized path
-    path_set = set(path_edges) if path_edges else set()
-
     # Edges (normal + black spots) with weighted width
     edge_xs, edge_ys = [], []
     edge_w, edge_c, edge_a = [], [], []
@@ -111,14 +108,9 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
         o, d = row["prev_sku"], row["next_sku"]
         if o not in pos or d not in pos:
             continue
-        is_path = (o, d) in path_set
         edge_xs.append([pos[o][0], pos[d][0]])
         edge_ys.append([pos[o][1], pos[d][1]])
-        if is_path:
-            edge_c.append("#2ca02c")
-            edge_w.append(4.0)
-            edge_a.append(0.9)
-        elif highlight_nodes is not None:
+        if highlight_nodes is not None:
             # Non-path edge when highlighting: faint gray background
             edge_c.append("#999999")
             edge_w.append(0.5)
@@ -152,6 +144,18 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             ("Transición", "@pair"),
             ("Cambio", "@weight"),
         ]))
+
+    # Path edges (drawn on top, even if not in historical edge_df)
+    if path_edges:
+        pxs, pys = [], []
+        for o, d in path_edges:
+            if o in pos and d in pos:
+                pxs.append([pos[o][0], pos[d][0]])
+                pys.append([pos[o][1], pos[d][1]])
+        if pxs:
+            p_src = ColumnDataSource(dict(xs=pxs, ys=pys))
+            p.multi_line("xs", "ys", source=p_src, line_color="#2ca02c",
+                         line_width=5, line_alpha=0.95)
 
     # 3-category classification: black spot, critical (high degree), normal
     deg_threshold = node_df["degree"].quantile(0.70) if len(node_df) > 0 else 0
