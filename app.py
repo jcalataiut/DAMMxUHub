@@ -1138,7 +1138,6 @@ if page == "Aprendizaje 2025":
 # ═══════════════════════ PAGE 2: 2026 ═══════════════════════
 else:
     st.title("Optimización · 18-22 May 2026")
-    st.caption("Planner teórico, producción real ejecutada y propuesta AI comparados con la misma lógica operativa.")
 
     df_plan_2026, df_real_2026 = get_2026_execution_data()
     planner_ind = planned_sequences_from_planificado(df_plan_2026)
@@ -1191,20 +1190,8 @@ else:
     real_totals = scenario_totals(real_bd)
     real_oee_global = _weighted_average(df_real_2026, "oee", "hl_real")
 
-    with st.expander("📦 Órdenes urgentes", expanded=False):
-        urgent_df = st.data_editor(
-            pd.DataFrame([{"active": False, "order_id": "URG-01", "sku": "EX1324NB",
-                           "linea": "Auto", "hl_total": 200.0}]),
-            num_rows="dynamic", key="urgent_editor",
-            column_config={
-                "active":    st.column_config.CheckboxColumn("Activa"),
-                "order_id":  st.column_config.TextColumn("ID orden"),
-                "sku":       st.column_config.SelectboxColumn("SKU", options=opt_ctx.skus, required=False),
-                "linea":     st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
-                "hl_total":  st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
-            },
-        )
-        urgent_orders = clean_urgent(urgent_df) if not urgent_df.empty else []
+    # urgent_orders se lee del rerun anterior para que esté disponible antes de optimizar
+    urgent_orders = st.session_state.get("_urgent_orders", [])
 
     result_key = f"res_{algo}_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
     if run_btn or result_key not in st.session_state:
@@ -1240,11 +1227,11 @@ else:
                     progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
                 res = run_sa(opt_ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
                 st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"], "urgent_extra": urgent_extra}
-            # Urgent orders feedback (shown right after optimization)
+            # Compute urgent orders feedback and save to session_state for display below the expander
             active_urgent = [o for o in urgent_orders if o["linea"] is not None or opt_ctx.eligible.get(o["sku"], [])]
+            urgent_rows = []
             if active_urgent:
                 opt_ind_latest = st.session_state[result_key]["schedule"]
-                urgent_rows = []
                 for o in active_urgent:
                     sku = o["sku"]
                     lines = [o["linea"]] if o["linea"] else opt_ctx.eligible.get(sku, [])
@@ -1258,8 +1245,7 @@ else:
                                                  "Pos": f"{pos+1}/{len(seq)}",
                                                  "Extra": vol,
                                                  "Status": "✓" if pos <= cutoff else "✗"})
-                if urgent_rows:
-                    st.dataframe(pd.DataFrame(urgent_rows), hide_index=True, use_container_width=True)
+            st.session_state["_urgent_feedback"] = urgent_rows
         finally:
             ga_mod.PRIORITY_ORDERS = original_priority
             for sku, orig_val in volumes_backup.items():
@@ -1302,12 +1288,27 @@ else:
     o2.metric("OEE global real", f"{real_oee_global*100:.1f}%")
     o3.metric("OEE global Óptimo", f"{opt_oee*100:.1f}%", delta=f"{oee_delta*100:+.1f} pp vs real")
     o4.metric("Tiempo optimización", f"{result['elapsed']:.1f}s")
-    st.caption(
-        "Planner teórico mostrado como escenario ideal de referencia; "
-        "la reducción principal compara Óptimo contra la producción real ejecutada."
-    )
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
+
+    with st.expander("📦 Órdenes urgentes", expanded=False):
+        urgent_df = st.data_editor(
+            pd.DataFrame([{"active": False, "order_id": "URG-01", "sku": "EX1324NB",
+                           "linea": "Auto", "hl_total": 200.0}]),
+            num_rows="dynamic", key="urgent_editor",
+            column_config={
+                "active":    st.column_config.CheckboxColumn("Activa"),
+                "order_id":  st.column_config.TextColumn("ID orden"),
+                "sku":       st.column_config.SelectboxColumn("SKU", options=opt_ctx.skus, required=False),
+                "linea":     st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
+                "hl_total":  st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
+            },
+        )
+        st.session_state["_urgent_orders"] = clean_urgent(urgent_df) if not urgent_df.empty else []
+
+    _urgent_fb = st.session_state.get("_urgent_feedback", [])
+    if _urgent_fb:
+        st.dataframe(pd.DataFrame(_urgent_fb), hide_index=True, use_container_width=True)
 
     _oee_cols = st.columns(3)
     for idx, l in enumerate(LINES):
