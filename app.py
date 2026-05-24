@@ -384,6 +384,26 @@ if page == "Aprendizaje 2025":
     mc2.metric("Transiciones", len(frames_2025[frames_2025["week"] == num_weeks]))
     mc3.metric("Semanas", num_weeks)
 
+    # Optimized path overlay (from last GA/SA run in Optimización 2026)
+    opt_res = next((st.session_state[k] for k in st.session_state if k.startswith("res_")), None)
+    if opt_res is not None:
+        oi = opt_res["schedule"]
+        opt_path = {line: list(zip(oi[line], oi[line][1:])) for line in LINES if len(oi[line]) > 1}
+        st.markdown("---")
+        st.subheader("Ruta optimizada")
+        cg1, cg2, cg3 = st.columns(3)
+        for idx, line in enumerate(LINES):
+            with [cg1, cg2, cg3][idx]:
+                skus_l = set(oi.get(line, []) + base_ind.get(line, []))
+                ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
+                ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
+                ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
+                nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
+                nf = nf[nf["sku"].isin(skus_l)]
+                fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", heatmap=True,
+                                        path_edges=opt_path.get(line,[]), pos=global_pos.get(line))
+                components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
+
     # Advance AFTER all widgets have rendered so the user sees the frame
     if st.session_state.playing_2025:
         if st.session_state.week_2025 >= num_weeks:
@@ -456,28 +476,20 @@ else:
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES}
 
-    # 3 Bokeh graphs
-    cg1, cg2, cg3 = st.columns(3)
-    for idx, line in enumerate(LINES):
-        with [cg1, cg2, cg3][idx]:
-            skus_l = set(opt_ind.get(line, []) + base_ind.get(line, []))
-            ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-            ef = ef[ef["prev_sku"].isin(skus_l) | ef["next_sku"].isin(skus_l)]
-            ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
-            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-            nf = nf[nf["sku"].isin(skus_l)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}", path_edges=opt_path.get(line, []),
-                                    pos=global_pos.get(line))
-            components.html(file_html(fig, INLINE, ""), height=400, scrolling=False)
-
     # Animated Gantt
     st.plotly_chart(gantt_animation(ctx, opt_ind, f"{an} optimizado"), key="gantt_anim")
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.subheader("Plan del planner")
+        st.plotly_chart(gantt_figure(ctx, base_ind), key="base_g")
+    with g2:
+        st.subheader(f"{an} optimizado")
+        st.plotly_chart(gantt_figure(ctx, opt_ind, title=f"{an} optimizado"), key="opt_g")
 
     mc1, mc2 = st.columns(2)
     mc1.plotly_chart(stacked_hours(base_bd, opt_bd, an), key="stacked")
     with mc2:
-        st.subheader("Plan del planner")
-        st.plotly_chart(gantt_figure(ctx, base_ind), key="base_g")
         rows = [{"Línea": f"L{l}", "Plan": f"{base_bd[l]['total']:.1f}h",
                   an: f"{opt_bd[l]['total']:.1f}h",
                   "Ahorro": f"{base_bd[l]['total']-opt_bd[l]['total']:+.1f}h",
