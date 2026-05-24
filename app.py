@@ -17,10 +17,10 @@ from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 from bokeh.resources import INLINE
 
+import ga_optimizer as ga_mod
 from ga_optimizer import (
     HOURS_PER_WEEK,
     LINES,
-    PRIORITY_ORDERS,
     OptimizerContext,
     baseline_individual,
     breakdown,
@@ -409,26 +409,6 @@ if page == "Aprendizaje 2025":
     mc2.metric("Transiciones", len(frames_2025[frames_2025["week"] == num_weeks]))
     mc3.metric("Semanas", num_weeks)
 
-    # Optimized path overlay (from last GA/SA run in Optimización 2026)
-    opt_res = next((st.session_state[k] for k in st.session_state if k.startswith("res_")), None)
-    if opt_res is not None:
-        oi = opt_res["schedule"]
-        opt_path = {line: list(zip(oi[line], oi[line][1:])) for line in LINES if len(oi[line]) > 1}
-        st.markdown("---")
-        st.subheader("Ruta optimizada")
-        cg1, cg2, cg3 = st.columns(3)
-        for idx, line in enumerate(LINES):
-            with [cg1, cg2, cg3][idx]:
-                ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-                ef["weight"] = ef.apply(lambda r: changeover_hours(ctx, r["prev_sku"], r["next_sku"], line), axis=1)
-                nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-                fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
-
-                                        path_edges=opt_path.get(line,[]),
-                                        highlight_nodes=set(oi.get(line, [])),
-                                        pos=global_pos.get(line))
-                components.html(file_html(fig, INLINE, ""), height=410, scrolling=False)
-
     # Advance AFTER all widgets have rendered so the user sees the frame
     if st.session_state.playing_2025:
         if st.session_state.week_2025 >= num_weeks:
@@ -472,18 +452,60 @@ else:
 
     result_key = f"res_{algo}"
     if run_btn or result_key not in st.session_state:
+        # Apply urgent orders: extra volume + priority
+        original_priority = list(ga_mod.PRIORITY_ORDERS)
+        volumes_backup = {}
+        if urgent_orders:
+            extra = []
+            for o in urgent_orders:
+                sku = o["sku"]
+                if o["hl_total"] is not None:
+                    volumes_backup.setdefault(sku, ctx.volumes.get(sku, 0))
+                    ctx.volumes[sku] = volumes_backup[sku] + o["hl_total"]
+                if o["linea"] is not None:
+                    extra.append((sku, o["linea"]))
+                else:
+                    for line in ctx.eligible.get(sku, LINES):
+                        extra.append((sku, line))
+            ga_mod.PRIORITY_ORDERS = original_priority + extra
+
         progress = st.progress(0, "Optimizando…")
-        if algo == "GA (Genético)":
-            def cb(g, b, m):
-                progress.progress((g+1)/ga_gen, text=f"G {g+1}/{ga_gen} · mejor={b:.1f}h")
-            t0 = time.time()
-            best_ind, history = evolve(ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
-            st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0}
-        else:
-            def cb(n, best, _):
-                progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
-            res = run_sa(ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
-            st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"]}
+        try:
+            if algo == "GA (Genético)":
+                def cb(g, b, m):
+                    progress.progress((g+1)/ga_gen, text=f"G {g+1}/{ga_gen} · mejor={b:.1f}h")
+                t0 = time.time()
+                best_ind, history = evolve(ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
+                st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0}
+            else:
+                def cb(n, best, _):
+                    progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
+                res = run_sa(ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
+                st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"]}
+            # Urgent orders feedback (shown right after optimization)
+            active_urgent = [o for o in urgent_orders if o["linea"] is not None or ctx.eligible.get(o["sku"], [])]
+            if active_urgent:
+                opt_ind_latest = st.session_state[result_key]["schedule"]
+                urgent_rows = []
+                for o in active_urgent:
+                    sku = o["sku"]
+                    lines = [o["linea"]] if o["linea"] else ctx.eligible.get(sku, [])
+                    for ln in lines:
+                        seq = opt_ind_latest.get(ln, [])
+                        if sku in seq:
+                            pos = seq.index(sku)
+                            cutoff = max(0, int(0.25 * len(seq)))
+                            vol = f"+{o['hl_total']:.0f} HL" if o["hl_total"] else ""
+                            urgent_rows.append({"SKU": sku, "Línea": f"L{ln}",
+                                                 "Pos": f"{pos+1}/{len(seq)}",
+                                                 "Extra": vol,
+                                                 "Status": "✓" if pos <= cutoff else "✗"})
+                if urgent_rows:
+                    st.dataframe(pd.DataFrame(urgent_rows), hide_index=True, use_container_width=True)
+        finally:
+            ga_mod.PRIORITY_ORDERS = original_priority
+            for sku, orig_val in volumes_backup.items():
+                ctx.volumes[sku] = orig_val
         progress.empty()
 
     result = st.session_state[result_key]
