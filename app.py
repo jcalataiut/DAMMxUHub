@@ -1322,6 +1322,15 @@ else:
                                     pos=global_pos.get(line))
             components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
 
+    _oee_cols = st.columns(3)
+    for idx, l in enumerate(LINES):
+        _oee_delta = opt_bd[l]["oee"] - real_bd[l]["oee"]
+        _oee_cols[idx].metric(
+            f"OEE L{l}",
+            f"{opt_bd[l]['oee']*100:.1f}%",
+            delta=f"{_oee_delta*100:+.1f} pp vs real",
+        )
+
     gantt_cap = max(
         max(v["total"] for v in planner_bd.values()),
         max(v["total"] for v in real_bd.values()),
@@ -1404,14 +1413,7 @@ else:
     )
     st.plotly_chart(_fig_dyn, use_container_width=True, key="dyn_chart")
 
-    _oee_cols = st.columns(3)
-    for idx, l in enumerate(LINES):
-        _oee_delta = opt_bd[l]["oee"] - real_bd[l]["oee"]
-        _oee_cols[idx].metric(
-            f"OEE L{l}",
-            f"{opt_bd[l]['oee']*100:.1f}%",
-            delta=f"{_oee_delta*100:+.1f} pp vs real",
-        )
+
 
     # ── Comparativa Real vs AI ───────────────────────────────────────────────
     st.subheader("Real ejecutado vs Óptimo")
