@@ -1610,7 +1610,7 @@ elif page == "Hyperparameter Tuning (Optuna)":
         seed = st.number_input("Optuna Seed", value=42)
         run_optuna_btn = st.button("▶ Run Optuna Study", type="primary", use_container_width=True)
 
-    opt_ctx = get_base_context()
+    opt_ctx = get_ctx()
     
     if run_optuna_btn:
         import optuna_optimizer
