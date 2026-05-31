@@ -59,10 +59,11 @@ class OptimizerContext:
     changeover_stats: Dict[str, Dict[Tuple[str, str], Dict[str, object]]]
     line_mean_co: Dict[str, float]
     hist_pairs: set
+    line_prior_alpha: Dict[str, float]
+    line_prior_beta: Dict[str, float]
     changeover_mode: ChangeoverMode = "bayes_mean"
     changeover_hdi_mass: float = 0.95
-    changeover_prior_alpha: float = 2.0
-    changeover_cache: Dict[Tuple[str, str, str, str, float, float], float] = field(default_factory=dict)
+    changeover_cache: Dict[Tuple[str, str, str, str, float], float] = field(default_factory=dict)
     w_cap: float = 100.0
     w_inc: float = 10000.0
     w_urg: float = 500.0
@@ -135,12 +136,29 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
         changeover_stats[line] = stats_map
         line_mean_co[line] = float(line_co["hours"].mean()) if not line_co.empty else 1.0
 
+    line_prior_alpha: Dict[str, float] = {}
+    line_prior_beta: Dict[str, float] = {}
+    for line in LINES:
+        line_co = changeover_df[changeover_df["line"] == line]
+        durations = line_co["hours"].dropna().values.astype(float)
+        if len(durations) < 2:
+            line_prior_alpha[line] = 1.05
+            line_prior_beta[line] = max(line_mean_co[line], 0.01) * 0.05
+            continue
+        m = float(np.mean(durations))
+        v = float(np.var(durations, ddof=1))
+        alpha = max(1.05, m**2 / max(v, 0.01) + 1.0)
+        beta = m * (alpha - 1.0)
+        line_prior_alpha[line] = alpha
+        line_prior_beta[line] = beta
+
     return OptimizerContext(
         weekly=weekly, skus=skus, volumes=volumes, sku_format=sku_format,
         eligible=eligible, fallback_skus=fallback_skus, throughput=throughput,
         sku_global_rate=sku_global_rate, plant_mean_rate=plant_mean_rate,
         changeover=changeover, changeover_stats=changeover_stats,
         line_mean_co=line_mean_co, hist_pairs=hist_pairs,
+        line_prior_alpha=line_prior_alpha, line_prior_beta=line_prior_beta,
     )
 
 
@@ -163,11 +181,9 @@ def set_changeover_policy(
     *,
     mode: ChangeoverMode,
     hdi_mass: float = 0.95,
-    prior_alpha: float = 2.0,
 ) -> None:
     ctx.changeover_mode = mode
     ctx.changeover_hdi_mass = float(np.clip(hdi_mass, 0.5, 0.995))
-    ctx.changeover_prior_alpha = float(max(1.01, prior_alpha))
 
 
 def _stable_seed(*parts: str) -> int:
@@ -202,8 +218,9 @@ def _bayesian_changeover_value(
     if mode == "observed_mean":
         return float(stats.get("mean", np.mean(samples)))
 
-    alpha = ctx.changeover_prior_alpha + len(samples)
-    prior_beta = ctx.line_mean_co.get(line, 1.0) * (ctx.changeover_prior_alpha - 1.0)
+    prior_alpha = ctx.line_prior_alpha.get(line, 1.05)
+    prior_beta = ctx.line_prior_beta.get(line, ctx.line_mean_co[line] * 0.05)
+    alpha = prior_alpha + len(samples)
     beta = prior_beta + float(samples.sum())
 
     if mode == "bayes_mean":
@@ -212,7 +229,6 @@ def _bayesian_changeover_value(
     cache_key = (
         line, pair[0], pair[1], mode,
         round(ctx.changeover_hdi_mass, 4),
-        round(ctx.changeover_prior_alpha, 4),
     )
     if cache_key in ctx.changeover_cache:
         return ctx.changeover_cache[cache_key]

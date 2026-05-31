@@ -652,23 +652,15 @@ def gantt_animation(ctx, individual, title=""):
 
 
 
-def scenario_total(ctx, individual, mode, hdi_mass, prior_alpha):
+def scenario_total(ctx, individual, mode, hdi_mass):
     previous = (
         ctx.changeover_mode,
         ctx.changeover_hdi_mass,
-        ctx.changeover_prior_alpha,
     )
-    set_changeover_policy(
-        ctx, mode=mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
-    )
+    set_changeover_policy(ctx, mode=mode, hdi_mass=hdi_mass)
     bd = breakdown(ctx, individual)
     total = sum(bd[l]["total"] for l in LINES)
-    set_changeover_policy(
-        ctx,
-        mode=previous[0],
-        hdi_mass=previous[1],
-        prior_alpha=previous[2],
-    )
+    set_changeover_policy(ctx, mode=previous[0], hdi_mass=previous[1])
     return total, bd
 
 
@@ -1161,17 +1153,9 @@ elif page == "Optimization 2026":
             key="co_policy",
         )
         hdi_pct = st.slider("HDI", 80, 99, 95, 1, key="co_hdi_pct")
-        prior_alpha = st.slider(
-             "Prior Strength (Alpha)",
-             1.01, 8.0, 2.0, 0.1,
-             help="Prior on exponential rate. 1.01 = Minimal prior (data dominates after 1 obs). 2.0 = Centered on 2025 machine average. Unseen transitions always fall back to line average.",
-            key="co_prior_alpha",
-        )
         co_mode = co_policy_options[co_policy_label]
         hdi_mass = hdi_pct / 100.0
-        set_changeover_policy(
-            opt_ctx, mode=co_mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
-        )
+        set_changeover_policy(opt_ctx, mode=co_mode, hdi_mass=hdi_mass)
         st.divider()
         ga_pop = st.slider("Population", 20, 200, 60, 10, key="ga_pop")
         ga_gen = st.slider("Generations", 30, 400, 150, 10, key="ga_gen")
@@ -1187,7 +1171,7 @@ elif page == "Optimization 2026":
     # urgent_orders is read from previous rerun to be available before optimizing
     urgent_orders = st.session_state.get("_urgent_orders", [])
 
-    result_key = f"res_GA_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
+    result_key = f"res_GA_{co_mode}_{hdi_pct}"
     if run_btn or result_key not in st.session_state:
         # Apply urgent orders: extra volume + priority
         original_priority = list(ga_mod.PRIORITY_ORDERS)
@@ -1256,8 +1240,8 @@ elif page == "Optimization 2026":
     opt_total = sum(opt_bd[l]["total"] for l in LINES)
     saved = real_totals["total"] - opt_total
     an = "GA"
-    min_total, min_bd = scenario_total(ai_ctx, opt_ind, "hdi_lower", hdi_mass, prior_alpha)
-    worst_total, worst_bd = scenario_total(ai_ctx, opt_ind, "hdi_upper", hdi_mass, prior_alpha)
+    min_total, min_bd = scenario_total(ai_ctx, opt_ind, "hdi_lower", hdi_mass)
+    worst_total, worst_bd = scenario_total(ai_ctx, opt_ind, "hdi_upper", hdi_mass)
     min_bd = enrich_model_breakdown(min_bd)
     worst_bd = enrich_model_breakdown(worst_bd)
     opt_oee = scenario_oee(opt_bd)
