@@ -197,6 +197,11 @@ def _bayesian_changeover_value(
     samples = np.asarray(stats.get("samples", []), dtype=float)
     samples = samples[np.isfinite(samples) & (samples >= 0)]
     if len(samples) == 0:
+        if ctx.changeover_prior_alpha <= 1.05:
+            # If the user sets the prior to be completely flat/uninformative,
+            # we assume a Uniform distribution bounded by our 12h physical cap.
+            # The expected value of Uniform(0, 12) is 6.0
+            return 6.0
         return float(stats.get("mean", ctx.line_mean_co[line]))
 
     if mode == "observed_mean":
