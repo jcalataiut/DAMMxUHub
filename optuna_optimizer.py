@@ -1,11 +1,9 @@
 import optuna
 from ga_optimizer import OptimizerContext, evolve, evaluate_schedule
 
-def run_optuna_study(ctx: OptimizerContext, n_trials: int = 50, seed: int = 42):
+def run_optuna_study(ctx: OptimizerContext, pop_size: int = 60, n_gen: int = 100, n_trials: int = 50, seed: int = 42):
     def objective(trial: optuna.Trial) -> float:
         # Fixed hyperparameters to avoid excessive computation times
-        pop_size = 60
-        n_gen = 100
         
         # 3 GA parameters to tune
         mut_prob = trial.suggest_float("mut_prob", 0.1, 1.0)

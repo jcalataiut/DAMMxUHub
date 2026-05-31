@@ -112,7 +112,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
         active_scroll="wheel_zoom",
         background_fill_color="#FAFBFC", border_fill_color="white",
         toolbar_location="right",
-        title="Producción 2025 — flujo deslizante",
+        title="Production 2025 — sliding flow",
     )
     p_gantt.ygrid.grid_line_color = None
     p_gantt.xgrid.grid_line_color = "#f0f0f0"
@@ -169,7 +169,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
                        source=g_src)
     p_gantt.add_tools(HoverTool(renderers=[gr], tooltips=[
         ("SKU", "@sku"), ("OF", "@of"),
-        ("Inicio", "@fecha"), ("Duración", "@dur"),
+        ("Start", "@fecha"), ("Duration", "@dur"),
         ("HL", "@hl"), ("OEE", "@oee"),
     ]))
     p_gantt.text(x="label_x", y="y", text="label", source=g_src,
@@ -308,24 +308,24 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
                                  line_color="color", line_width="w",
                                  line_alpha="alpha", line_join="round")
         pg.add_tools(HoverTool(renderers=[edges_r], tooltips=[
-            ("Transición", "@pair"), ("Cambio", "@weight"),
+            ("Transition", "@pair"), ("Changeover", "@weight"),
         ]))
         nodes_r = pg.scatter("x", "y", source=n_src, size="size",
                               fill_color="color", fill_alpha="alpha",
                               line_color="stroke", line_width="stroke_w")
         pg.add_tools(HoverTool(renderers=[nodes_r], tooltips=[
-            ("SKU", "@sku"), ("Conexiones", "@degree"),
+            ("SKU", "@sku"), ("Connections", "@degree"),
         ]))
         graph_figs.append(pg)
 
     # ════════════════════════════ SHARED CONTROLS ════════════════════════════
     slider = Slider(start=1, end=total_days, value=initial_day, step=1,
-                    title="Día del año", sizing_mode="stretch_width", show_value=True)
+                    title="Day of the year", sizing_mode="stretch_width", show_value=True)
     play_btn = Button(label="▶", width=50, button_type="primary")
     speed_slider = Slider(start=1, end=10, value=3, step=1,
-                          title="Velocidad (días/tick)", width=200)
+                          title="Speed (days/tick)", width=200)
     week_label = Div(
-        text=f"<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Semana {initial_week}/53</b></div>",
+        text=f"<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Week {initial_week}/53</b></div>",
         width=140,
     )
 
@@ -391,7 +391,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
             node_srcs[g].change.emit();
         }
 
-        week_label.text = "<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Semana " + week + "/53</b></div>";
+        week_label.text = "<div style='padding:18px 8px 0 14px;font-size:14px;'><b>Week " + week + "/53</b></div>";
     """)
     slider.js_on_change("value", update_cb)
 
@@ -506,8 +506,8 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
                            line_color="c", line_width="w", line_alpha="a",
                            line_join="round")
         p.add_tools(HoverTool(renderers=[r_e], tooltips=[
-            ("Transición", "@pair"),
-            ("Cambio", "@weight"),
+            ("Transition", "@pair"),
+            ("Changeover", "@weight"),
         ]))
 
     # Path edges (drawn on top, even if not in historical edge_df)
@@ -576,7 +576,7 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
                        fill_color="color", fill_alpha="alpha",
                        line_color="stroke", line_width="sw")
         p.add_tools(HoverTool(renderers=[r], tooltips=[
-            ("SKU", "@sku"), ("Conexiones", "@degree"),
+            ("SKU", "@sku"), ("Connections", "@degree"),
         ]))
 
     return p
@@ -588,7 +588,7 @@ def gantt_figure(ctx, individual, title="", cap=None):
     fig = go.Figure()
     for _, r in gantt.iterrows():
         c = colors.get(r["type"], FMT_COLOR.get(r["format"], "#999"))
-        hover = f"<b>{r['task']}</b><br>Inicio: {r['start_h']:.1f}h<br>Duración: {r['duration_h']:.2f}h"
+        hover = f"<b>{r['task']}</b><br>Start: {r['start_h']:.1f}h<br>Duration: {r['duration_h']:.2f}h"
         if r["type"] == "production":
             hover += f"<br>HL: {r['hl']:,.0f}<br>Throughput: {r['rate_hl_per_h']:.0f} HL/h"
         fig.add_trace(go.Bar(x=[r["duration_h"]], y=[r["line"]], base=r["start_h"], orientation="h",
@@ -599,7 +599,7 @@ def gantt_figure(ctx, individual, title="", cap=None):
     cap = cap or max(HOURS_PER_WEEK.values())
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
-    fig.update_layout(barmode="stack", title=title, xaxis_title="Horas",
+    fig.update_layout(barmode="stack", title=title, xaxis_title="Hours",
                        yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
                        height=270, margin=dict(l=50, r=15, t=35, b=20), plot_bgcolor="white")
     fig.update_xaxes(gridcolor="#eee", range=[0, cap])
@@ -638,7 +638,7 @@ def gantt_animation(ctx, individual, title=""):
         fig.add_trace(go.Bar(x=[0], y=[ll], orientation="h", showlegend=False))
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
-    fig.update_layout(barmode="stack", title=title, xaxis_title="Horas",
+    fig.update_layout(barmode="stack", title=title, xaxis_title="Hours",
                        yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
                        height=290, plot_bgcolor="white", margin=dict(l=50, r=15, t=35, b=20),
                        updatemenus=[{"type": "buttons", "buttons": [
@@ -646,7 +646,7 @@ def gantt_animation(ctx, individual, title=""):
                            {"label": "⏹", "method": "animate", "args": [[None], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}]},
                        ], "direction": "left", "showactive": False, "x": 0, "y": 1.12}],
                        sliders=[{"steps": [{"label": f"{h:.0f}h", "method": "animate", "args": [[f"{h:.0f}h"], {}]} for h in range(0, int(max_h) + 1, step)],
-                                 "currentvalue": {"prefix": "Hora: "}}])
+                                 "currentvalue": {"prefix": "Hour: "}}])
     fig.update_xaxes(gridcolor="#eee", range=[0, cap])
     return fig
 
@@ -872,7 +872,7 @@ def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, 
             # 4. Construct rows with scaled production
             cursor = startup_h
             rows.append({
-                "line": f"L{line}", "task": "ARRANQUE", "sku": "_arr",
+                "line": f"L{line}", "task": "STARTUP", "sku": "_arr",
                 "start_h": 0.0, "end_h": startup_h,
                 "duration_h": startup_h, "type": "startup",
                 "format": "", "hl": 0.0, "rate_hl_per_h": 0.0,
@@ -910,7 +910,7 @@ def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, 
             cursor = STARTUP_HOURS[line]
             if sequences.get(line):
                 rows.append({
-                    "line": f"L{line}", "task": "ARRANQUE", "sku": "_arr",
+                    "line": f"L{line}", "task": "STARTUP", "sku": "_arr",
                     "start_h": 0.0, "end_h": STARTUP_HOURS[line],
                     "duration_h": STARTUP_HOURS[line], "type": "startup",
                     "format": "", "hl": 0.0, "rate_hl_per_h": 0.0,
@@ -949,7 +949,7 @@ def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, 
     fig = go.Figure()
     for _, r in gantt.iterrows():
         c = colors.get(r["type"], FMT_COLOR.get(r["format"], "#999"))
-        hover = f"<b>{r['task']}</b><br>Inicio: {r['start_h']:.1f}h<br>Duración: {r['duration_h']:.2f}h"
+        hover = f"<b>{r['task']}</b><br>Start: {r['start_h']:.1f}h<br>Duration: {r['duration_h']:.2f}h"
         if r["type"] == "production":
             hover += f"<br>HL: {r['hl']:,.0f}<br>Throughput: {r['rate_hl_per_h']:.0f} HL/h"
         fig.add_trace(go.Bar(
@@ -963,7 +963,7 @@ def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, 
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
     fig.update_layout(
-        barmode="stack", title=title, xaxis_title="Horas",
+        barmode="stack", title=title, xaxis_title="Hours",
         yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
         height=300, margin=dict(l=50, r=15, t=35, b=20), plot_bgcolor="white",
     )
@@ -986,7 +986,7 @@ def metric_card(title, value, detail="", accent="#2ca02c"):
     )
 
 
-@st.cache_data(show_spinner="Cargando plan y real 2026…")
+@st.cache_data(show_spinner="Loading 2026 plan and real...")
 def get_2026_execution_data():
     df_plan = load_planificado_producciones(
         RAW_DIR / "Planificado - producciones 14 - 17 - 19.xlsx",
@@ -1010,7 +1010,7 @@ def clean_urgent(urgent_df):
         orders.append({
             "order_id": str(row.get("order_id", f"URG-{len(orders)+1:02d}")),
             "sku": sku,
-            "linea": None if pd.isna(row.get("linea")) or str(row.get("linea")) in {"", "Auto"} else str(row["linea"]),
+            "line": None if pd.isna(row.get("line")) or str(row.get("line")) in {"", "Auto"} else str(row["line"]),
             "hl_total": None if pd.isna(row.get("hl_total")) or float(row["hl_total"]) <= 0 else float(row["hl_total"]),
             "latest_position": None,
         })
@@ -1026,7 +1026,7 @@ def get_ctx():
 def get_frames():
     return load_frames_2025()
 
-@st.cache_resource(show_spinner="Cargando histórico para Gantt…")
+@st.cache_resource(show_spinner="Loading history for Gantt...")
 def get_gantt_history():
     return load_historical_gantt()
 
@@ -1086,7 +1086,7 @@ def get_node_classification():
     return cls
 
 
-@st.cache_resource(show_spinner="Calculando layout esférico…")
+@st.cache_resource(show_spinner="Calculating spherical layout...")
 def get_global_positions():
     """Spherical (shell) layout per line: 3 concentric rings by category.
     Inner ring = black spots, middle = critical, outer = normal."""
@@ -1116,18 +1116,18 @@ def get_global_positions():
 
 global_pos = get_global_positions()
 
-page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026", "Hyperparameter Tuning (Optuna)"], label_visibility="collapsed")
+page = st.sidebar.radio("Viewer", ["Learning 2025", "Optimization 2026", "Hyperparameter Tuning (Optuna)"], label_visibility="collapsed")
 
 # ═══════════════════════ PAGE 1: 2025 ═══════════════════════
-if page == "Aprendizaje 2025":
+if page == "Learning 2025":
     st.title("OPla Lab")
     st.subheader("Generative Bayesian Complex Networks")
 
     mc1, mc2, mc3 = st.columns(3)
-    mc1.metric("SKUs totales", nodes_2025["sku"].nunique())
-    mc2.metric("Transiciones únicas",
+    mc1.metric("Total SKUs", nodes_2025["sku"].nunique())
+    mc2.metric("Unique Transitions",
                int(frames_2025.groupby(["line", "prev_sku", "next_sku"]).ngroups))
-    mc3.metric("Órdenes 2025", len(gantt_history))
+    mc3.metric("2025 Orders", len(gantt_history))
 
     # Single combined dashboard: Gantt + 3 graphs sharing one slider+play (all client-side JS)
     # Initial cursor at week 3 (day 21) so the user sees the start of the year with context.
@@ -1135,8 +1135,8 @@ if page == "Aprendizaje 2025":
                     height=880, scrolling=False)
 
 # ═══════════════════════ PAGE 2: 2026 ═══════════════════════
-elif page == "Optimización 2026":
-    st.title("Optimización · 18-22 May 2026")
+elif page == "Optimization 2026":
+    st.title("Optimization · May 18-22 2026")
 
     df_plan_2026, df_real_2026 = get_2026_execution_data()
     planner_ind = planned_sequences_from_planificado(df_plan_2026)
@@ -1150,13 +1150,13 @@ elif page == "Optimización 2026":
         st.divider()
         st.caption("Changeovers 2025")
         co_policy_options = {
-            "Media bayesiana": "bayes_mean",
-            "Media observada": "observed_mean",
-            "HDI inferior": "hdi_lower",
-            "HDI superior": "hdi_upper",
+            "Bayesian Mean": "bayes_mean",
+            "Observed Mean": "observed_mean",
+            "Lower HDI": "hdi_lower",
+            "Upper HDI": "hdi_upper",
         }
         co_policy_label = st.selectbox(
-            "Valor usado por el optimizador",
+            "Value used by the optimizer",
             list(co_policy_options.keys()),
             key="co_policy",
         )
@@ -1164,7 +1164,7 @@ elif page == "Optimización 2026":
         prior_alpha = st.slider(
             "Fuerza prior",
             1.1, 8.0, 2.0, 0.1,
-            help="Prior Gamma sobre la tasa exponencial; 2.0 equivale a una observación previa cercana a la media de línea.",
+            help="Prior Gamma on exponential rate; 2.0 equals one prior observation close to the line mean.",
             key="co_prior_alpha",
         )
         co_mode = co_policy_options[co_policy_label]
@@ -1173,18 +1173,18 @@ elif page == "Optimización 2026":
             opt_ctx, mode=co_mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
         )
         st.divider()
-        ga_pop = st.slider("Población", 20, 200, 60, 10, key="ga_pop")
-        ga_gen = st.slider("Generaciones", 30, 400, 150, 10, key="ga_gen")
+        ga_pop = st.slider("Population", 20, 200, 60, 10, key="ga_pop")
+        ga_gen = st.slider("Generations", 30, 400, 150, 10, key="ga_gen")
         ga_seed = st.number_input("Seed GA", 42, step=1, key="ga_seed")
 
-    run_btn = st.sidebar.button("▶ Optimizar", type="primary", use_container_width=True, key="run_opt")
+    run_btn = st.sidebar.button("▶ Optimize", type="primary", use_container_width=True, key="run_opt")
     planner_bd = breakdown_from_sequences(opt_ctx, planner_ind, planner_volumes)
     real_bd = breakdown_from_sequences(opt_ctx, real_ind, real_volumes, oee_by_line=real_oee_lines)
     planner_totals = scenario_totals(planner_bd)
     real_totals = scenario_totals(real_bd)
     real_oee_global = _weighted_average(df_real_2026, "oee", "hl_real")
 
-    # urgent_orders se lee del rerun anterior para que esté disponible antes de optimizar
+    # urgent_orders is read from previous rerun to be available before optimizing
     urgent_orders = st.session_state.get("_urgent_orders", [])
 
     result_key = f"res_GA_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
@@ -1201,8 +1201,8 @@ elif page == "Optimización 2026":
                     volumes_backup.setdefault(sku, opt_ctx.volumes.get(sku, 0))
                     opt_ctx.volumes[sku] = volumes_backup[sku] + o["hl_total"]
                     urgent_extra[sku] = o["hl_total"]
-                if o["linea"] is not None:
-                    extra.append((sku, o["linea"]))
+                if o["line"] is not None:
+                    extra.append((sku, o["line"]))
                 else:
                     for line in opt_ctx.eligible.get(sku, LINES):
                         extra.append((sku, line))
@@ -1216,20 +1216,20 @@ elif page == "Optimización 2026":
             best_ind, history = evolve(opt_ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
             st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0, "urgent_extra": urgent_extra}
             # Compute urgent orders feedback and save to session_state for display below the expander
-            active_urgent = [o for o in urgent_orders if o["linea"] is not None or opt_ctx.eligible.get(o["sku"], [])]
+            active_urgent = [o for o in urgent_orders if o["line"] is not None or opt_ctx.eligible.get(o["sku"], [])]
             urgent_rows = []
             if active_urgent:
                 opt_ind_latest = st.session_state[result_key]["schedule"]
                 for o in active_urgent:
                     sku = o["sku"]
-                    lines = [o["linea"]] if o["linea"] else opt_ctx.eligible.get(sku, [])
+                    lines = [o["line"]] if o["line"] else opt_ctx.eligible.get(sku, [])
                     for ln in lines:
                         seq = opt_ind_latest.get(ln, [])
                         if sku in seq:
                             pos = seq.index(sku)
                             cutoff = max(0, int(0.25 * len(seq)))
                             vol = f"+{o['hl_total']:.0f} HL" if o["hl_total"] else ""
-                            urgent_rows.append({"SKU": sku, "Línea": f"L{ln}",
+                            urgent_rows.append({"SKU": sku, "Line": f"L{ln}",
                                                  "Pos": f"{pos+1}/{len(seq)}",
                                                  "Extra": vol,
                                                  "Status": "✓" if pos <= cutoff else "✗"})
@@ -1264,31 +1264,31 @@ elif page == "Optimización 2026":
     oee_delta = opt_oee - real_oee_global
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Real ejecutado", f"{real_totals['total']:.1f}h")
-    c2.metric("Óptimo", f"{opt_total:.1f}h",
+    c1.metric("Real Executed", f"{real_totals['total']:.1f}h")
+    c2.metric("Optimal", f"{opt_total:.1f}h",
               delta=f"{opt_total - real_totals['total']:.1f}h vs real",
               delta_color="inverse")
-    c3.metric("Reducción", f"{saved:.1f}h", delta=f"{saved/real_totals['total']*100:.1f}%")
+    c3.metric("Reduction", f"{saved:.1f}h", delta=f"{saved/real_totals['total']*100:.1f}%")
     c4.metric("Minimum Execution", f"{min_total:.1f}h")
     c5.metric("Worst Execution", f"{worst_total:.1f}h")
     o1, o2, o3, o4 = st.columns(4)
-    o1.metric("Planner teórico", f"{planner_totals['total']:.1f}h")
+    o1.metric("Theoretical Planner", f"{planner_totals['total']:.1f}h")
     o2.metric("OEE global real", f"{real_oee_global*100:.1f}%")
-    o3.metric("OEE global Óptimo", f"{opt_oee*100:.1f}%", delta=f"{oee_delta*100:+.1f} pp vs real")
-    o4.metric("Tiempo optimización", f"{result['elapsed']:.1f}s")
+    o3.metric("Optimal Global OEE", f"{opt_oee*100:.1f}%", delta=f"{oee_delta*100:+.1f} pp vs real")
+    o4.metric("Optimization time", f"{result['elapsed']:.1f}s")
 
     opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
 
-    with st.expander("📦 Órdenes urgentes", expanded=False):
+    with st.expander("📦 Urgent Orders", expanded=False):
         urgent_df = st.data_editor(
             pd.DataFrame([{"active": False, "order_id": "URG-01", "sku": "EX1324NB",
-                           "linea": "Auto", "hl_total": 200.0}]),
+                           "line": "Auto", "hl_total": 200.0}]),
             num_rows="dynamic", key="urgent_editor",
             column_config={
                 "active":    st.column_config.CheckboxColumn("Activa"),
                 "order_id":  st.column_config.TextColumn("ID orden"),
                 "sku":       st.column_config.SelectboxColumn("SKU", options=opt_ctx.skus, required=False),
-                "linea":     st.column_config.SelectboxColumn("Línea", options=["Auto"] + LINES, required=False),
+                "line":     st.column_config.SelectboxColumn("Line", options=["Auto"] + LINES, required=False),
                 "hl_total":  st.column_config.NumberColumn("HL extra", min_value=0.0, step=25.0),
             },
         )
@@ -1327,7 +1327,7 @@ elif page == "Optimización 2026":
         max(HOURS_PER_WEEK.values()),
     ) + 10
 
-    st.subheader("Planner teórico")
+    st.subheader("Theoretical Planner")
     st.plotly_chart(
         gantt_figure_from_sequences(
             opt_ctx, planner_ind, planner_volumes, title="", cap=gantt_cap,
@@ -1335,7 +1335,7 @@ elif page == "Optimización 2026":
         key="planner_g", use_container_width=True,
     )
 
-    st.subheader("Real ejecutado")
+    st.subheader("Real Executed")
     st.plotly_chart(
         gantt_figure_from_sequences(
             opt_ctx, real_ind, real_volumes, title="", cap=gantt_cap, oee_by_line=real_oee_lines,
@@ -1349,40 +1349,40 @@ elif page == "Optimización 2026":
     opt_prod_t  = sum(opt_bd[l]["prod"] for l in LINES)
     opt_dead_t  = opt_total - opt_prod_t
 
-    st.subheader("Óptimo")
+    st.subheader("Optimal")
     st.plotly_chart(
         gantt_figure(ai_ctx, opt_ind, title="", cap=gantt_cap),
         key="opt_g", use_container_width=True,
     )
 
-    # ── Comparativa Real vs Óptimo ────────────────────────────────────────────
-    st.subheader("Real ejecutado vs Óptimo")
+    # ── Real vs Optimal Comparison ────────────────────────────────────────────
+    st.subheader("Real Executed vs Optimal")
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("Total horas · Real", f"{real_totals['total']:.1f}h")
-    h2.metric("Total horas · Óptimo", f"{opt_total:.1f}h",
+    h2.metric("Total hours · Optimal", f"{opt_total:.1f}h",
               delta=f"{opt_total - real_totals['total']:.1f}h vs real",
               delta_color="inverse")
     h3.metric("Horas muertas · Real", f"{real_dead_t:.1f}h")
-    h4.metric("Horas muertas · Óptimo",
+    h4.metric("Dead hours · Optimal",
               f"{opt_dead_t:.1f}h",
               delta=f"{opt_dead_t - real_dead_t:.1f}h vs real",
               delta_color="inverse")
-    st.caption(f"Horas disponibles totales (3 líneas): {avail_total:.0f}h")
+    st.caption(f"Total available hours (3 lines): {avail_total:.0f}h")
     comp_rows = [
         {
-            "Línea": f"L{l}",
+            "Line": f"L{l}",
             "Total Real": f"{real_bd[l]['total']:.1f}h",
             "Muertas Real": f"{real_bd[l]['total'] - real_bd[l]['prod']:.1f}h",
-            "Total Óptimo": f"{opt_bd[l]['total']:.1f}h",
-            "Muertas Óptimo": f"{opt_bd[l]['total'] - opt_bd[l]['prod']:.1f}h",
+            "Total Optimal": f"{opt_bd[l]['total']:.1f}h",
+            "Dead Optimal": f"{opt_bd[l]['total'] - opt_bd[l]['prod']:.1f}h",
             "Disponible": f"{HOURS_PER_WEEK[l]:.0f}h",
         }
         for l in LINES
     ]
     st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
 
-    # ── Dinámica de mejora por línea ──────────────────────────────────────────
-    st.subheader("Dinámica de mejora por línea")
+    # ── Improvement dynamics by line ──────────────────────────────────────────
+    st.subheader("Improvement dynamics by line")
     _ll = [f"L{l}" for l in LINES]
     _real_h = [real_bd[l]["total"] for l in LINES]
     _opt_h  = [opt_bd[l]["total"]  for l in LINES]
@@ -1392,16 +1392,16 @@ elif page == "Optimización 2026":
 
     _fig_dyn = go.Figure()
     _fig_dyn.add_trace(go.Bar(
-        name="Real ejecutado", x=_ll, y=_real_h,
+        name="Real Executed", x=_ll, y=_real_h,
         marker=dict(color=_COLOR_REAL, line=dict(color="#6B7585", width=1.2)),
         text=[f"{h:.0f}h" for h in _real_h], textposition="outside",
         hovertemplate="%{x} Real: %{y:.1f}h<extra></extra>",
     ))
     _fig_dyn.add_trace(go.Bar(
-        name="Óptimo", x=_ll, y=_opt_h,
+        name="Optimal", x=_ll, y=_opt_h,
         marker=dict(color=_COLOR_OPT, line=dict(color="#059669", width=1.2)),
         text=[f"{h:.0f}h" for h in _opt_h], textposition="outside",
-        hovertemplate="%{x} Óptimo: %{y:.1f}h<extra></extra>",
+        hovertemplate="%{x} Optimal: %{y:.1f}h<extra></extra>",
     ))
     for i, l in enumerate(LINES):
         _fig_dyn.add_shape(
@@ -1421,13 +1421,13 @@ elif page == "Optimización 2026":
         barmode="group", height=300, plot_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(l=40, r=10, t=30, b=20),
-        yaxis=dict(gridcolor="#eee", title="Horas"),
+        yaxis=dict(gridcolor="#eee", title="Hours"),
     )
     st.plotly_chart(_fig_dyn, use_container_width=True, key="dyn_chart")
 
-    # ── Migración de SKUs: Planner teórico → Óptimo ───────────────────────────
-    st.subheader("Migración de SKUs entre líneas")
-    st.caption("SKUs que el optimizador reasigna a una línea distinta respecto al planner teórico.")
+    # ── SKU migration: Theoretical Planner → Optimal ───────────────────────────
+    st.subheader("SKU migration across lines")
+    st.caption("SKUs that the optimizer reassigns to a different line compared to the theoretical planner.")
 
     _planner_line = {sku: line for line, skus in planner_ind.items() for sku in skus}
     _opt_line = {sku: line for line, skus in opt_ind.items() for sku in skus}
@@ -1435,15 +1435,15 @@ elif page == "Optimización 2026":
     _migrations = [
         {"SKU": sku,
          "Planner": f"L{_planner_line[sku]}" if sku in _planner_line else "—",
-         "Óptimo":  f"L{_opt_line[sku]}"     if sku in _opt_line     else "—",
-         "Cambio":  _planner_line.get(sku) != _opt_line.get(sku)}
+         "Optimal":  f"L{_opt_line[sku]}"     if sku in _opt_line     else "—",
+         "Changeover":  _planner_line.get(sku) != _opt_line.get(sku)}
         for sku in sorted(_all_skus)
     ]
-    _moved = [r for r in _migrations if r["Cambio"]]
+    _moved = [r for r in _migrations if r["Changeover"]]
 
     if _moved:
-        # Sankey con colores vivos: nodos izq = Planner, nodos der = Óptimo
-        # Cada línea tiene su color; los flujos heredan el color de la línea origen
+        # Sankey con colores vivos: nodos izq = Planner, right nodes = Optimal
+        # Each line has its color; flows inherit origin line color
         def _hex_to_rgba(hex_color, alpha):
             r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
             return f"rgba({r},{g},{b},{alpha})"
@@ -1451,13 +1451,13 @@ elif page == "Optimización 2026":
         _line_idx = {l: i for i, l in enumerate(LINES)}
         _flow: dict = {}
         for r in _moved:
-            if r["Planner"] == "—" or r["Óptimo"] == "—":
+            if r["Planner"] == "—" or r["Optimal"] == "—":
                 continue
             src = _line_idx[r["Planner"][1:]]
-            tgt = _line_idx[r["Óptimo"][1:]] + len(LINES)
+            tgt = _line_idx[r["Optimal"][1:]] + len(LINES)
             _flow[(src, tgt)] = _flow.get((src, tgt), 0) + 1
 
-        _node_labels = [f"Planner  L{l}" for l in LINES] + [f"Óptimo  L{l}" for l in LINES]
+        _node_labels = [f"Planner  L{l}" for l in LINES] + [f"Optimal  L{l}" for l in LINES]
         _node_colors = [_hex_to_rgba(LINE_COLOR[l], 0.85) for l in LINES] * 2
 
         _link_sources = [s for s, _ in _flow]
@@ -1467,9 +1467,9 @@ elif page == "Optimización 2026":
         _link_labels  = [
             f"{v} SKU{'s' if v > 1 else ''}: "
             + ", ".join(r["SKU"] for r in _moved
-                        if r["Planner"] != "—" and r["Óptimo"] != "—"
+                        if r["Planner"] != "—" and r["Optimal"] != "—"
                         and _line_idx[r["Planner"][1:]] == s
-                        and _line_idx[r["Óptimo"][1:]] + len(LINES) == t)
+                        and _line_idx[r["Optimal"][1:]] + len(LINES) == t)
             for (s, t), v in _flow.items()
         ]
 
@@ -1499,15 +1499,15 @@ elif page == "Optimización 2026":
         )
         st.plotly_chart(_fig_sk, use_container_width=True, key="sankey_migration")
 
-        _move_df = pd.DataFrame([{"SKU": r["SKU"], "Planner": r["Planner"], "→ Óptimo": r["Óptimo"]}
+        _move_df = pd.DataFrame([{"SKU": r["SKU"], "Planner": r["Planner"], "→ Optimal": r["Optimal"]}
                                   for r in _moved])
         st.dataframe(_move_df, hide_index=True, use_container_width=True)
     else:
-        st.info("El optimizador mantiene todos los SKUs en la misma línea que el planner teórico.")
+        st.info("The optimizer keeps all SKUs on the same line as the theoretical planner.")
 
     # ── Contrafactual 2025 ────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Contrafactual 2025 — Potencial ahorro anual")
+    st.subheader("Counterfactual 2025 — Potential annual savings")
 
     if "cf_2025" not in st.session_state:
         _ctx_cf = replace(ctx, changeover_mode="observed_mean", changeover_cache={})
@@ -1536,66 +1536,66 @@ elif page == "Optimización 2026":
                     _rem.remove(_nxt)
                     _cur = _nxt
             _cf_rows.append({
-                "Semana": _wk,
-                "Horas totales": round(_real_h, 1),
-                "CO real (h)":   round(_real_co, 1),
-                "CO óptimo (h)": round(_opt_co, 1),
-                "Ahorro (h)":    round(_real_co - _opt_co, 1),
+                "Week": _wk,
+                "Total hours": round(_real_h, 1),
+                "Real CO (h)":   round(_real_co, 1),
+                "Optimal CO (h)": round(_opt_co, 1),
+                "Savings (h)":    round(_real_co - _opt_co, 1),
                 "HL":            round(_real_hl, 0),
-                "OEE real (%)":  round(_real_oee * 100, 1),
+                "Real OEE (%)":  round(_real_oee * 100, 1),
             })
         st.session_state["cf_2025"] = pd.DataFrame(_cf_rows)
 
     _cf = st.session_state["cf_2025"]
-    _cf_total_real_co  = _cf["CO real (h)"].sum()
-    _cf_total_opt_co   = _cf["CO óptimo (h)"].sum()
-    _cf_total_saving   = _cf["Ahorro (h)"].sum()
-    _cf_total_h        = _cf["Horas totales"].sum()
-    _cf_real_oee_avg   = float((_cf["OEE real (%)"] * _cf["HL"]).sum() / _cf["HL"].sum())
-    # OEE correcto: h_tot son horas de producción pura (changeovers están fuera).
+    _cf_total_real_co  = _cf["Real CO (h)"].sum()
+    _cf_total_opt_co   = _cf["Optimal CO (h)"].sum()
+    _cf_total_saving   = _cf["Savings (h)"].sum()
+    _cf_total_h        = _cf["Total hours"].sum()
+    _cf_real_oee_avg   = float((_cf["Real OEE (%)"] * _cf["HL"]).sum() / _cf["HL"].sum())
+    # Correct OEE: h_tot is pure production hours (changeovers excluded).
     # Total horas usadas = h_tot + CO. Reducir CO baja el denominador, OEE sube.
-    _cf_prod_h         = (_cf["OEE real (%)"] / 100 * _cf["Horas totales"]).sum()
+    _cf_prod_h         = (_cf["Real OEE (%)"] / 100 * _cf["Total hours"]).sum()
     _cf_real_total_used  = _cf_total_h + _cf_total_real_co
     _cf_opt_total_used   = _cf_total_h + _cf_total_opt_co
     _cf_real_oee_corr    = _cf_prod_h / _cf_real_total_used if _cf_real_total_used > 0 else 0.0
     _cf_opt_oee          = _cf_prod_h / _cf_opt_total_used  if _cf_opt_total_used  > 0 else 0.0
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("CO total real 2025",   f"{_cf_total_real_co:.0f}h")
-    m2.metric("CO total óptimo 2025", f"{_cf_total_opt_co:.0f}h",
+    m1.metric("Total Real 2025 CO",   f"{_cf_total_real_co:.0f}h")
+    m2.metric("Total Optimal 2025 CO", f"{_cf_total_opt_co:.0f}h",
               delta=f"{_cf_total_opt_co - _cf_total_real_co:.0f}h ({_cf_total_saving / _cf_total_real_co * 100:.1f}%)",
               delta_color="inverse")
-    m3.metric("OEE estimado óptimo",  f"{_cf_opt_oee * 100:.1f}%",
+    m3.metric("Estimated Optimal OEE",  f"{_cf_opt_oee * 100:.1f}%",
               delta=f"{(_cf_opt_oee - _cf_real_oee_corr) * 100:+.1f} pp vs real")
 
-    # Weekly chart: CO real vs óptimo + ahorro acumulado
-    _cf_cum = _cf["Ahorro (h)"].cumsum()
+    # Weekly chart: Real vs optimal CO + ahorro acumulado
+    _cf_cum = _cf["Savings (h)"].cumsum()
     _fig_cf = go.Figure()
     _fig_cf.add_trace(go.Bar(
-        name="CO real", x=_cf["Semana"], y=_cf["CO real (h)"],
+        name="Real CO", x=_cf["Week"], y=_cf["Real CO (h)"],
         marker_color="#8B95A5", hovertemplate="S%{x} · Real: %{y:.1f}h<extra></extra>",
     ))
     _fig_cf.add_trace(go.Bar(
-        name="CO óptimo", x=_cf["Semana"], y=_cf["CO óptimo (h)"],
-        marker_color="#10B981", hovertemplate="S%{x} · Óptimo: %{y:.1f}h<extra></extra>",
+        name="Optimal CO", x=_cf["Week"], y=_cf["Optimal CO (h)"],
+        marker_color="#10B981", hovertemplate="S%{x} · Optimal: %{y:.1f}h<extra></extra>",
     ))
     _fig_cf.add_trace(go.Scatter(
-        name="Ahorro acumulado", x=_cf["Semana"], y=_cf_cum,
+        name="Cumulative savings", x=_cf["Week"], y=_cf_cum,
         mode="lines", line=dict(color="#EF4444", width=2, dash="dot"),
         yaxis="y2", hovertemplate="S%{x} · Acumulado: %{y:.1f}h<extra></extra>",
     ))
     _fig_cf.update_layout(
         barmode="group", height=340, plot_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        xaxis=dict(title="Semana", dtick=4),
-        yaxis=dict(title="Horas changeover / semana", gridcolor="#eee"),
-        yaxis2=dict(title="Ahorro acumulado (h)", overlaying="y", side="right",
+        xaxis=dict(title="Week", dtick=4),
+        yaxis=dict(title="Changeover hours / week", gridcolor="#eee"),
+        yaxis2=dict(title="Cumulative savings (h)", overlaying="y", side="right",
                     showgrid=False, tickfont=dict(color="#EF4444")),
         margin=dict(l=50, r=60, t=30, b=30),
     )
     st.plotly_chart(_fig_cf, use_container_width=True, key="cf_2025_chart")
 
-    with st.expander("Ver detalle semanal"):
+    with st.expander("View weekly detail"):
         st.dataframe(_cf, hide_index=True, use_container_width=True)
 
 
@@ -1607,6 +1607,8 @@ elif page == "Hyperparameter Tuning (Optuna)":
     with st.sidebar:
         st.divider()
         n_trials = st.number_input("Number of Optuna Trials", min_value=5, max_value=200, value=20)
+        pop_size = st.number_input("Fixed Population Size", min_value=10, max_value=500, value=60)
+        n_gen = st.number_input("Fixed Generations", min_value=10, max_value=1000, value=100)
         seed = st.number_input("Optuna Seed", value=42)
         run_optuna_btn = st.button("▶ Run Optuna Study", type="primary", use_container_width=True)
 
@@ -1615,7 +1617,7 @@ elif page == "Hyperparameter Tuning (Optuna)":
     if run_optuna_btn:
         import optuna_optimizer
         with st.spinner(f"Running Optuna Study with {n_trials} trials... This may take a bit."):
-            study = optuna_optimizer.run_optuna_study(opt_ctx, n_trials=n_trials, seed=seed)
+            study = optuna_optimizer.run_optuna_study(opt_ctx, pop_size=pop_size, n_gen=n_gen, n_trials=n_trials, seed=seed)
         
         st.success("Optuna Study completed!")
         st.subheader("Best Hyperparameters Found")
