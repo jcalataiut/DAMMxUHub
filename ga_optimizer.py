@@ -63,6 +63,11 @@ class OptimizerContext:
     changeover_hdi_mass: float = 0.95
     changeover_prior_alpha: float = 2.0
     changeover_cache: Dict[Tuple[str, str, str, str, float, float], float] = field(default_factory=dict)
+    w_cap: float = 100.0
+    w_inc: float = 10000.0
+    w_urg: float = 500.0
+    mut_prob: float = 0.85
+    tour_size: int = 3
 
 
 def load_clean_context(clean_dir: Path) -> OptimizerContext:
@@ -270,7 +275,7 @@ def breakdown(ctx: OptimizerContext, individual: Chromosome) -> Dict[str, Dict[s
 def evaluate_schedule(ctx: OptimizerContext, individual: Chromosome) -> Tuple[float]:
     flat = [s for line in LINES for s in individual.get(line, [])]
     if len(flat) != len(ctx.skus) or set(flat) != set(ctx.skus):
-        return (PENALTY_INCOMPATIBLE * 10,)
+        return (ctx.w_inc * 10,)
 
     total = 0.0
     penalty = 0.0
@@ -278,23 +283,23 @@ def evaluate_schedule(ctx: OptimizerContext, individual: Chromosome) -> Tuple[fl
         seq = individual.get(line, [])
         for sku in seq:
             if ctx.sku_format.get(sku) not in PHYSICAL_FORMAT_BY_LINE[line]:
-                penalty += PENALTY_INCOMPATIBLE
+                penalty += ctx.w_inc
             elif (sku, line) not in ctx.hist_pairs and sku not in ctx.fallback_skus:
-                penalty += PENALTY_INCOMPATIBLE / 2
+                penalty += ctx.w_inc / 2
 
         sim = simulate_line(ctx, line, seq)
         total += sim["total"]
 
         if sim["total"] > HOURS_PER_WEEK[line]:
             over = sim["total"] - HOURS_PER_WEEK[line]
-            penalty += PENALTY_CAPACITY_BASE * (np.exp(over / 5.0) - 1.0)
+            penalty += ctx.w_cap * (np.exp(over / 5.0) - 1.0)
 
         for sku, urgent_line in PRIORITY_ORDERS:
             if urgent_line == line and sku in seq:
                 pos = seq.index(sku)
                 cutoff = max(0, int(0.25 * len(seq)))
                 if pos > cutoff:
-                    penalty += PENALTY_PRIORITY * ((pos - cutoff) / max(1, len(seq)))
+                    penalty += ctx.w_urg * ((pos - cutoff) / max(1, len(seq)))
 
     return (total + penalty,)
 
@@ -424,10 +429,10 @@ def evolve(
         pop_fit = sorted(zip(population, fitnesses), key=lambda x: x[1])
         new_pop = [deepcopy(ind) for ind, _ in pop_fit[:elitism]]
         while len(new_pop) < pop_size:
-            p1 = _tournament(pop_fit)
-            p2 = _tournament(pop_fit)
+            p1 = _tournament(pop_fit, k=ctx.tour_size)
+            p2 = _tournament(pop_fit, k=ctx.tour_size)
             child = crossover(ctx, p1, p2)
-            if random.random() < 0.85:
+            if random.random() < ctx.mut_prob:
                 child = mutate(ctx, child)
             new_pop.append(child)
         population = new_pop

@@ -42,7 +42,6 @@ from ga_optimizer import (
     schedule_to_gantt,
     set_changeover_policy,
 )
-from simulated_annealing import run_sa
 
 HERE = Path(__file__).resolve().parent
 CLEAN_DIR = HERE / "clean_data"
@@ -1117,7 +1116,7 @@ def get_global_positions():
 
 global_pos = get_global_positions()
 
-page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026"], label_visibility="collapsed")
+page = st.sidebar.radio("Visor", ["Aprendizaje 2025", "Optimización 2026", "Hyperparameter Tuning (Optuna)"], label_visibility="collapsed")
 
 # ═══════════════════════ PAGE 1: 2025 ═══════════════════════
 if page == "Aprendizaje 2025":
@@ -1136,7 +1135,7 @@ if page == "Aprendizaje 2025":
                     height=880, scrolling=False)
 
 # ═══════════════════════ PAGE 2: 2026 ═══════════════════════
-else:
+elif page == "Optimización 2026":
     st.title("Optimización · 18-22 May 2026")
 
     df_plan_2026, df_real_2026 = get_2026_execution_data()
@@ -1147,7 +1146,6 @@ else:
     real_oee_lines = real_oee_by_line(df_real_2026)
     opt_ctx = context_for_plan_week(ctx, df_plan_2026, df_real_2026)
 
-    algo = st.sidebar.selectbox("Algoritmo", ["GA (Genético)", "SA (Enfriamiento simulado)"], key="algo")
     with st.sidebar:
         st.divider()
         st.caption("Changeovers 2025")
@@ -1175,13 +1173,9 @@ else:
             opt_ctx, mode=co_mode, hdi_mass=hdi_mass, prior_alpha=prior_alpha,
         )
         st.divider()
-        if algo == "GA (Genético)":
-            ga_pop = st.slider("Población", 20, 200, 60, 10, key="ga_pop")
-            ga_gen = st.slider("Generaciones", 30, 400, 150, 10, key="ga_gen")
-            ga_seed = st.number_input("Seed GA", 42, step=1, key="ga_seed")
-        else:
-            sa_iter = st.slider("Iteraciones", 2_000, 50_000, 15_000, 1_000, key="sa_iter")
-            sa_seed = st.number_input("Seed SA", 42, step=1, key="sa_seed")
+        ga_pop = st.slider("Población", 20, 200, 60, 10, key="ga_pop")
+        ga_gen = st.slider("Generaciones", 30, 400, 150, 10, key="ga_gen")
+        ga_seed = st.number_input("Seed GA", 42, step=1, key="ga_seed")
 
     run_btn = st.sidebar.button("▶ Optimizar", type="primary", use_container_width=True, key="run_opt")
     planner_bd = breakdown_from_sequences(opt_ctx, planner_ind, planner_volumes)
@@ -1193,7 +1187,7 @@ else:
     # urgent_orders se lee del rerun anterior para que esté disponible antes de optimizar
     urgent_orders = st.session_state.get("_urgent_orders", [])
 
-    result_key = f"res_{algo}_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
+    result_key = f"res_GA_{co_mode}_{hdi_pct}_{prior_alpha:.1f}"
     if run_btn or result_key not in st.session_state:
         # Apply urgent orders: extra volume + priority
         original_priority = list(ga_mod.PRIORITY_ORDERS)
@@ -1216,17 +1210,11 @@ else:
 
         progress = st.progress(0, "Optimizando…")
         try:
-            if algo == "GA (Genético)":
-                def cb(g, b, m):
-                    progress.progress((g+1)/ga_gen, text=f"G {g+1}/{ga_gen} · mejor={b:.1f}h")
-                t0 = time.time()
-                best_ind, history = evolve(opt_ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
-                st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0, "urgent_extra": urgent_extra}
-            else:
-                def cb(n, best, _):
-                    progress.progress(min(n / sa_iter, 1.0), text=f"SA {n}/{sa_iter} · mejor={best:.1f}h")
-                res = run_sa(opt_ctx, n_iter=sa_iter, seed=sa_seed, on_trial=cb)
-                st.session_state[result_key] = {"schedule": res["schedule"], "elapsed": res["elapsed_s"], "urgent_extra": urgent_extra}
+            def cb(g, b, m):
+                progress.progress((g+1)/ga_gen, text=f"G {g+1}/{ga_gen} · mejor={b:.1f}h")
+            t0 = time.time()
+            best_ind, history = evolve(opt_ctx, pop_size=ga_pop, n_gen=ga_gen, seed=ga_seed, on_generation=cb)
+            st.session_state[result_key] = {"schedule": best_ind, "elapsed": time.time()-t0, "urgent_extra": urgent_extra}
             # Compute urgent orders feedback and save to session_state for display below the expander
             active_urgent = [o for o in urgent_orders if o["linea"] is not None or opt_ctx.eligible.get(o["sku"], [])]
             urgent_rows = []
@@ -1267,7 +1255,7 @@ else:
     opt_bd = enrich_model_breakdown(breakdown(ai_ctx, opt_ind))
     opt_total = sum(opt_bd[l]["total"] for l in LINES)
     saved = real_totals["total"] - opt_total
-    an = algo.split(" ")[0]
+    an = "GA"
     min_total, min_bd = scenario_total(ai_ctx, opt_ind, "hdi_lower", hdi_mass, prior_alpha)
     worst_total, worst_bd = scenario_total(ai_ctx, opt_ind, "hdi_upper", hdi_mass, prior_alpha)
     min_bd = enrich_model_breakdown(min_bd)
@@ -1609,3 +1597,32 @@ else:
 
     with st.expander("Ver detalle semanal"):
         st.dataframe(_cf, hide_index=True, use_container_width=True)
+
+
+# ═══════════════════════ PAGE 3: Optuna ═══════════════════════
+elif page == "Hyperparameter Tuning (Optuna)":
+    st.title("Bayesian Optimization of GA with Optuna TPE")
+    st.markdown("Optimization of the Genetic Algorithm hyperparameters (population size, mutation probability, tournament size, and penalty weights) using the Tree-structured Parzen Estimator (TPE).")
+    
+    with st.sidebar:
+        st.divider()
+        n_trials = st.number_input("Number of Optuna Trials", min_value=5, max_value=200, value=20)
+        seed = st.number_input("Optuna Seed", value=42)
+        run_optuna_btn = st.button("▶ Run Optuna Study", type="primary", use_container_width=True)
+
+    opt_ctx = get_base_context()
+    
+    if run_optuna_btn:
+        import optuna_optimizer
+        with st.spinner(f"Running Optuna Study with {n_trials} trials... This may take a bit."):
+            study = optuna_optimizer.run_optuna_study(opt_ctx, n_trials=n_trials, seed=seed)
+        
+        st.success("Optuna Study completed!")
+        st.subheader("Best Hyperparameters Found")
+        st.json(study.best_params)
+        
+        st.metric("Best Fitness (lower is better)", f"{study.best_value:,.2f}")
+        
+        st.subheader("Trial History")
+        trials_df = study.trials_dataframe()
+        st.dataframe(trials_df)
