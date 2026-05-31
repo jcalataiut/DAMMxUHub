@@ -235,8 +235,8 @@ def _bayesian_changeover_value(
 
     rng = np.random.default_rng(_stable_seed(line, pair[0], pair[1], mode))
     posterior_rate = rng.gamma(shape=alpha, scale=1.0 / beta, size=4000)
-    posterior_mean_time = 1.0 / posterior_rate
-    low, high = _hdi_from_samples(posterior_mean_time, ctx.changeover_hdi_mass)
+    posterior_duration = 1.0 / posterior_rate
+    low, high = _hdi_from_samples(posterior_duration, ctx.changeover_hdi_mass)
     value = low if mode == "hdi_lower" else high
     ctx.changeover_cache[cache_key] = float(value)
     return float(value)
