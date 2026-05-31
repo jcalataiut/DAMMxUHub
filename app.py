@@ -1162,9 +1162,9 @@ elif page == "Optimization 2026":
         )
         hdi_pct = st.slider("HDI", 80, 99, 95, 1, key="co_hdi_pct")
         prior_alpha = st.slider(
-            "Prior Strength (Alpha)",
-            1.01, 8.0, 1.01, 0.1,
-            help="Prior on exponential rate. 1.01 = Flat/Uniform prior (No knowledge). 2.0 = Centered on 2025 machine average.",
+             "Prior Strength (Alpha)",
+             1.01, 8.0, 2.0, 0.1,
+             help="Prior on exponential rate. 1.01 = Minimal prior (data dominates after 1 obs). 2.0 = Centered on 2025 machine average. Unseen transitions always fall back to line average.",
             key="co_prior_alpha",
         )
         co_mode = co_policy_options[co_policy_label]
