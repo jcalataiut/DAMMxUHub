@@ -57,6 +57,7 @@ class OptimizerContext:
     plant_mean_rate: float
     changeover: Dict[str, Dict[Tuple[str, str], float]]
     changeover_stats: Dict[str, Dict[Tuple[str, str], Dict[str, object]]]
+    sku_node: Dict[str, str]
     line_mean_co: Dict[str, float]
     hist_pairs: set
     line_prior_alpha: Dict[str, float]
@@ -78,6 +79,8 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
     sku_info = pd.read_csv(clean_dir / "sku_info.csv")
     eligibility_df = pd.read_csv(clean_dir / "sku_eligibility.csv")
     hist_pairs_df = pd.read_csv(clean_dir / "historical_pairs.csv")
+    hist_weeks_path = clean_dir / "historical_weeks.csv"
+    hist_weeks_df = pd.read_csv(hist_weeks_path) if hist_weeks_path.exists() else pd.DataFrame()
     with open(clean_dir / "params.json") as f:
         params = json.load(f)
 
@@ -93,6 +96,15 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
     volumes = {k: float(v) for k, v in volumes.items() if pd.notna(v)}
 
     sku_format = dict(zip(sku_info["sku"], sku_info["format"]))
+    if {"sku", "node"}.issubset(hist_weeks_df.columns):
+        sku_node = (
+            hist_weeks_df.dropna(subset=["sku", "node"])
+            .groupby("sku")["node"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) else x.iloc[0])
+            .to_dict()
+        )
+    else:
+        sku_node = {sku: sku for sku in skus}
 
     eligible: Dict[str, List[str]] = {}
     fallback_skus: List[str] = []
@@ -122,7 +134,9 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
         co_map: Dict[Tuple[str, str], float] = {}
         stats_map: Dict[Tuple[str, str], Dict[str, object]] = {}
         for _, row in line_co.iterrows():
-            key = (row["prev_sku"], row["next_sku"])
+            prev_key = row["prev_node"] if "prev_node" in row.index else row["prev_sku"]
+            next_key = row["next_node"] if "next_node" in row.index else row["next_sku"]
+            key = (prev_key, next_key)
             hours = float(row["hours"])
             co_map[key] = hours
             samples = _parse_changeover_samples(row, hours)
@@ -156,7 +170,7 @@ def load_clean_context(clean_dir: Path) -> OptimizerContext:
         weekly=weekly, skus=skus, volumes=volumes, sku_format=sku_format,
         eligible=eligible, fallback_skus=fallback_skus, throughput=throughput,
         sku_global_rate=sku_global_rate, plant_mean_rate=plant_mean_rate,
-        changeover=changeover, changeover_stats=changeover_stats,
+        changeover=changeover, changeover_stats=changeover_stats, sku_node=sku_node,
         line_mean_co=line_mean_co, hist_pairs=hist_pairs,
         line_prior_alpha=line_prior_alpha, line_prior_beta=line_prior_beta,
     )
@@ -253,17 +267,21 @@ def changeover_hours(ctx: OptimizerContext, prev_sku: str, next_sku: str,
                      line: str) -> float:
     if prev_sku == next_sku:
         return 0.0
-    pair = (prev_sku, next_sku)
+    prev_node = ctx.sku_node.get(prev_sku, prev_sku)
+    next_node = ctx.sku_node.get(next_sku, next_sku)
+    if prev_node == next_node:
+        return 0.0
+    pair = (prev_node, next_node)
     stats = ctx.changeover_stats.get(line, {}).get(pair)
     if stats is None:
-        pair = (next_sku, prev_sku)
+        pair = (next_node, prev_node)
         stats = ctx.changeover_stats.get(line, {}).get(pair)
     if stats is not None:
         val = _bayesian_changeover_value(ctx, line, pair, stats)
     else:
-        val = ctx.changeover[line].get((prev_sku, next_sku))
+        val = ctx.changeover[line].get((prev_node, next_node))
     if val is None or not np.isfinite(val):
-        val = ctx.changeover[line].get((next_sku, prev_sku))
+        val = ctx.changeover[line].get((next_node, prev_node))
     if val is None or not np.isfinite(val):
         base = ctx.line_mean_co[line]
         if ctx.sku_format.get(prev_sku) != ctx.sku_format.get(next_sku):
@@ -308,6 +326,9 @@ def evaluate_schedule(ctx: OptimizerContext, individual: Chromosome) -> Tuple[fl
 
         if sim["total"] > HOURS_PER_WEEK[line]:
             over = sim["total"] - HOURS_PER_WEEK[line]
+            # Capacity is operationally hard: a line cannot run beyond the
+            # available weekly hours just because the soft objective improves.
+            penalty += ctx.w_inc * (1.0 + over * over)
             penalty += ctx.w_cap * (np.exp(over / 5.0) - 1.0)
 
         for sku, urgent_line in PRIORITY_ORDERS:

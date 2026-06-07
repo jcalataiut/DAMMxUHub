@@ -16,6 +16,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from data_loaders import add_graph_node_columns, classify_graph_edge
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,13 +129,16 @@ class PostMortemAnalyzer:
         # Enriquecer con datos de cambios
         cambios_cols = [
             c for c in ["of", "n_cambios", "freq_total", "c_principal",
-                        "c_brand", "c_envase", "c_producto"]
+                        "c_brand", "c_envase", "c_producto", "material_precio"]
             if c in self.df_cambios.columns
         ]
         df = df.merge(
             self.df_cambios[cambios_cols].drop_duplicates("of"),
             on="of", how="left"
         )
+        if "material_precio" not in df.columns and "mat_precio" in df.columns:
+            df["material_precio"] = df["mat_precio"]
+        df = add_graph_node_columns(df)
 
         # Enriquecer con mantenimiento
         mant_agg = (
@@ -259,7 +264,7 @@ class PostMortemAnalyzer:
         -------
         pd.DataFrame
             Secuencias con columnas adicionales:
-            ['sku_prev', 'marca_prev', 'envase_prev', 'oee_seq_prev',
+            ['sku_prev', 'prev_node', 'edge_type', 'oee_seq_prev',
              'es_primera_of_semana', 'tipo_transicion']
         """
         if self._df_clean is None:
@@ -275,16 +280,17 @@ class PostMortemAnalyzer:
 
         # Producto anterior en la misma línea y semana
         df["sku_prev"] = grp["sku"].shift(1)
-        df["marca_prev"] = grp["marca"].shift(1)
-        df["envase_prev"] = grp["envase"].shift(1) if "envase" in df.columns else None
+        for col in ["node", "node_marca", "node_volumen", "node_pack", "node_envase"]:
+            df[f"prev_{col}"] = grp[col].shift(1)
         df["oee_seq_prev"] = grp["oee_seq"].shift(1)
         df["h_tot_prev"] = grp["h_tot_of"].shift(1)
 
         # ¿Es la primera OF de la semana en esa línea? (no tiene transición real)
         df["es_primera_of_semana"] = df["sku_prev"].isna()
 
-        # Clasificación de la transición
-        df["tipo_transicion"] = df.apply(self._classify_transition, axis=1)
+        # Clasificación de la transición: identidad del grafo por atributo de nodo.
+        df["edge_type"] = df.apply(classify_graph_edge, axis=1)
+        df["tipo_transicion"] = df["edge_type"]
 
         self._sequences = df
         return df
@@ -318,10 +324,10 @@ class PostMortemAnalyzer:
         """
         Genera matrices de transición N×N por línea.
 
-        Cada celda (SKU_i → SKU_j) contiene:
-        - oee_mean: OEE medio de SKU_j cuando viene de SKU_i
+        Cada celda (node_i → node_j) contiene:
+        - oee_mean: OEE medio del nodo destino cuando viene del nodo origen
         - oee_std: desviación estándar del OEE
-        - oee_degradation: diferencia vs. OEE baseline de SKU_j (cuánto se pierde)
+        - oee_degradation: diferencia vs. OEE baseline del nodo destino
         - count: número de veces que ocurrió esa transición
         - changeover_h_mean: duración media del cambio (horas)
 
@@ -337,27 +343,27 @@ class PostMortemAnalyzer:
         seq = self._sequences.copy()
         transitions = seq[~seq["es_primera_of_semana"]].copy()
 
-        # Baseline OEE por SKU y línea (mediana de OFs sin cambio o con continuación)
+        # Baseline OEE por nodo y línea (mediana de OFs sin cambio o con continuación)
         baseline = (
-            seq[seq["tipo_transicion"].isin(["continuacion", "inicio_semana"])]
-            .groupby(["tren", "sku"])["oee_seq"]
+            seq[seq["tipo_transicion"].isin(["C0_self", "inicio_semana"])]
+            .groupby(["tren", "node"])["oee_seq"]
             .median()
             .reset_index()
             .rename(columns={"oee_seq": "oee_baseline"})
         )
-        # Fallback: mediana global por SKU-línea si no hay continuaciones
+        # Fallback: mediana global por nodo-línea si no hay continuaciones
         baseline_global = (
-            seq.groupby(["tren", "sku"])["oee_seq"]
+            seq.groupby(["tren", "node"])["oee_seq"]
             .median()
             .reset_index()
             .rename(columns={"oee_seq": "oee_baseline_global"})
         )
-        baseline = baseline.merge(baseline_global, on=["tren", "sku"], how="right")
+        baseline = baseline.merge(baseline_global, on=["tren", "node"], how="right")
         baseline["oee_baseline"] = baseline["oee_baseline"].fillna(
             baseline["oee_baseline_global"]
         )
 
-        transitions = transitions.merge(baseline, on=["tren", "sku"], how="left")
+        transitions = transitions.merge(baseline, on=["tren", "node"], how="left")
         transitions["oee_degradation"] = (
             transitions["oee_baseline"] - transitions["oee_seq"]
         )
@@ -369,7 +375,14 @@ class PostMortemAnalyzer:
             if df_l.empty:
                 continue
 
-            agg = df_l.groupby(["sku_prev", "sku"]).agg(
+            agg = df_l.groupby(["prev_node", "node"]).agg(
+                sku_prev=("sku_prev", lambda x: x.mode().iloc[0] if len(x.mode()) else x.iloc[0]),
+                sku=("sku", lambda x: x.mode().iloc[0] if len(x.mode()) else x.iloc[0]),
+                edge_type=("edge_type", lambda x: x.mode().iloc[0] if len(x.mode()) else "desconocido"),
+                node_marca=("node_marca", "first"),
+                node_volumen=("node_volumen", "first"),
+                node_pack=("node_pack", "first"),
+                node_envase=("node_envase", "first"),
                 oee_mean=("oee_seq", "mean"),
                 oee_std=("oee_seq", "std"),
                 oee_degradation=("oee_degradation", "mean"),
@@ -378,9 +391,9 @@ class PostMortemAnalyzer:
             ).reset_index()
 
             def _pivot(col: str) -> pd.DataFrame:
-                p = agg.pivot(index="sku_prev", columns="sku", values=col)
-                p.index.name = "from_sku"
-                p.columns.name = "to_sku"
+                p = agg.pivot(index="prev_node", columns="node", values=col)
+                p.index.name = "from_node"
+                p.columns.name = "to_node"
                 return p
 
             result[line] = {
@@ -394,8 +407,8 @@ class PostMortemAnalyzer:
             print(
                 f"[build_transition_matrices] Línea {line}: "
                 f"{len(agg)} transiciones únicas "
-                f"({agg['sku_prev'].nunique()} SKUs origen, "
-                f"{agg['sku'].nunique()} SKUs destino)"
+                f"({agg['prev_node'].nunique()} nodos origen, "
+                f"{agg['node'].nunique()} nodos destino)"
             )
 
         self._transition_matrices = result
@@ -409,8 +422,8 @@ class PostMortemAnalyzer:
         """
         Modela las transiciones como un Grafo Dirigido (DiGraph) por línea.
 
-        Nodos: SKUs
-        Aristas (A → B): A fue seguido de B
+        Nodos: marca × volumen × pack × envase
+        Aristas (A → B): el nodo A fue seguido del nodo B en la misma línea
         Peso de arista: degradación de OEE (positivo = pérdida)
 
         Métricas calculadas:
@@ -433,12 +446,18 @@ class PostMortemAnalyzer:
             G = nx.DiGraph()
 
             for _, row in raw.iterrows():
-                u, v = row["sku_prev"], row["sku"]
+                u, v = row["prev_node"], row["node"]
+                G.add_node(u)
+                G.add_node(v, marca=row.get("node_marca"), volumen=row.get("node_volumen"),
+                           pack=row.get("node_pack"), envase=row.get("node_envase"))
                 G.add_edge(
                     u, v,
                     weight=float(row["oee_degradation"]),
                     oee_mean=float(row["oee_mean"]),
                     count=int(row["count"]),
+                    edge_type=row.get("edge_type", "desconocido"),
+                    sku_prev=row.get("sku_prev"),
+                    sku=row.get("sku"),
                     changeover_h=float(row["changeover_h_mean"])
                     if pd.notna(row["changeover_h_mean"]) else np.nan,
                 )
@@ -508,7 +527,8 @@ class PostMortemAnalyzer:
         -------
         pd.DataFrame
             Black spots ordenados por impacto total descendente. Columnas:
-            ['tren', 'sku_prev', 'sku', 'tipo_transicion', 'oee_mean', 'oee_baseline',
+            ['tren', 'prev_node', 'node', 'edge_type', 'sku_prev', 'sku',
+             'oee_mean', 'oee_baseline',
              'oee_degradation', 'count', 'changeover_h_mean', 'hl_perdidos_estimados',
              'gravedad']
         """
@@ -537,22 +557,22 @@ class PostMortemAnalyzer:
             if self._sequences is not None:
                 tipo_map = (
                     self._sequences[self._sequences["tren"] == line]
-                    .dropna(subset=["sku_prev"])
-                    .groupby(["sku_prev", "sku"])["tipo_transicion"]
+                    .dropna(subset=["prev_node"])
+                    .groupby(["prev_node", "node"])["tipo_transicion"]
                     .agg(lambda x: x.mode().iloc[0] if len(x) > 0 else "desconocido")
                     .reset_index()
                 )
-                raw = raw.merge(tipo_map, on=["sku_prev", "sku"], how="left")
+                raw = raw.merge(tipo_map, on=["prev_node", "node"], how="left")
 
             # Coste estimado en HL perdidos
             # HL_perdidos = degradación_OEE × HL_producidos_medio × n_ocurrencias
-            hl_medio_sku = (
+            hl_medio_node = (
                 self._df_master[self._df_master["tren"] == line]
-                .groupby("sku")["hl"]
+                .groupby("node")["hl"]
                 .median()
                 .fillna(0)
             )
-            raw["hl_medio_destino"] = raw["sku"].map(hl_medio_sku).fillna(0)
+            raw["hl_medio_destino"] = raw["node"].map(hl_medio_node).fillna(0)
             raw["hl_perdidos_estimados"] = (
                 raw["oee_degradation"].clip(lower=0)
                 * raw["hl_medio_destino"]
@@ -608,7 +628,7 @@ class PostMortemAnalyzer:
 
         # ── Top 10 peores transiciones ────────────────────────────────────
         cols_report = [
-            "tren", "sku_prev", "sku", "tipo_transicion",
+            "tren", "prev_node", "node", "edge_type", "sku_prev", "sku",
             "oee_mean", "oee_degradation", "count",
             "changeover_h_mean", "hl_perdidos_estimados", "gravedad",
         ]
@@ -618,9 +638,11 @@ class PostMortemAnalyzer:
             .head(10)
             .rename(columns={
                 "tren": "Línea",
-                "sku_prev": "SKU origen",
-                "sku": "SKU destino",
-                "tipo_transicion": "Tipo cambio",
+                "prev_node": "Nodo origen",
+                "node": "Nodo destino",
+                "edge_type": "Tipo arista",
+                "sku_prev": "SKU origen observado",
+                "sku": "SKU destino observado",
                 "oee_mean": "OEE medio resultante",
                 "oee_degradation": "Degradación OEE",
                 "count": "Veces ocurrido",
@@ -636,7 +658,7 @@ class PostMortemAnalyzer:
             for node, attrs in G.nodes(data=True):
                 node_rows.append({
                     "Línea": line,
-                    "SKU": node,
+                    "Nodo": node,
                     "Betweenness": attrs.get("betweenness", 0),
                     "In-degree ponderado (degradación recibida)":
                         attrs.get("in_deg_weighted", 0),
@@ -692,8 +714,8 @@ class PostMortemAnalyzer:
                 "Nº black spots": len(bs),
                 "HL perdidos estimados (black spots)": bs["hl_perdidos_estimados"].sum()
                     if not bs.empty and "hl_perdidos_estimados" in bs.columns else 0,
-                "Peor transición": (
-                    f"{bs.iloc[0]['sku_prev']} → {bs.iloc[0]['sku']}"
+                "Peor arista": (
+                    f"{bs.iloc[0]['prev_node']} → {bs.iloc[0]['node']}"
                     if not bs.empty else "N/A"
                 ),
             })

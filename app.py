@@ -14,7 +14,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from bokeh.embed import file_html
 from bokeh.layouts import column as bk_column, row as bk_row
-from bokeh.models import Button, ColumnDataSource, CustomJS, Div, HoverTool, Slider, Span
+from bokeh.models import Arrow, Button, ColumnDataSource, CustomJS, Div, HoverTool, Slider, Span, VeeHead
 from bokeh.plotting import figure
 from bokeh.resources import CDN
 
@@ -48,6 +48,7 @@ CLEAN_DIR = HERE / "clean_data"
 RAW_DIR = HERE / "raw_data"
 WEEK_START_2026 = "2026-05-18"
 WEEK_END_2026 = "2026-05-22 23:59:59"
+OPTIMIZER_RESULT_VERSION = "hard_capacity_positive_demand_v2"
 
 st.set_page_config(page_title="LineWise", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
@@ -60,17 +61,79 @@ div[data-testid="stMetricLabel"] {font-size: 0.8rem;}
 
 FMT_COLOR = {"1/2": "#4c72b0", "1/3": "#dd8452", "2/5": "#55a868"}
 LINE_COLOR = {"14": "#1f77b4", "17": "#ff7f0e", "19": "#2ca02c"}
+EDGE_TYPE_COLOR = {
+    "C_brand": "#2563eb",
+    "C_vol": "#d97706",
+    "C_pack": "#059669",
+    "C_envase": "#dc2626",
+    "C0_self": "#64748b",
+    "desconocido": "#6b7280",
+}
+
+
+def _first_available(df: pd.DataFrame, candidates: List[str], fallback: str | None = None) -> str:
+    for col in candidates:
+        if col in df.columns:
+            return col
+    if fallback is not None:
+        return fallback
+    raise KeyError(f"None of these columns exist: {candidates}")
+
+
+def sku_to_graph_node(ctx, sku: str) -> str:
+    return str(ctx.sku_node.get(str(sku), str(sku)))
+
+
+def split_graph_node(node: str) -> tuple[str, str, str, str]:
+    parts = str(node).split("|")
+    parts = (parts + ["UK"] * 4)[:4]
+    return tuple(parts)  # marca, volumen, pack, envase
+
+
+def classify_node_transition(prev_node: str, next_node: str) -> str:
+    if prev_node == next_node:
+        return "C0_self"
+    pm, pv, pp, pe = split_graph_node(prev_node)
+    nm, nv, npack, ne = split_graph_node(next_node)
+    if pm != nm:
+        return "C_brand"
+    if pv != nv:
+        return "C_vol"
+    if pp != npack:
+        return "C_pack"
+    if pe != ne:
+        return "C_envase"
+    return "C0_self"
 
 
 def load_frames_2025():
-    frames = pd.read_csv(CLEAN_DIR / "frames_2025.csv", dtype={"line": str, "week": int, "prev_sku": str, "next_sku": str})
-    nodes = pd.read_csv(CLEAN_DIR / "nodes_2025.csv", dtype={"line": str, "week": int, "sku": str})
+    frames = pd.read_csv(CLEAN_DIR / "frames_2025.csv", dtype={"line": str, "week": int})
+    nodes = pd.read_csv(CLEAN_DIR / "nodes_2025.csv", dtype={"line": str, "week": int})
     try:
         spots = pd.read_csv(CLEAN_DIR / "black_spots_2025.csv")
     except FileNotFoundError:
-        spots = pd.DataFrame(columns=["line", "prev_sku", "next_sku"])
+        spots = pd.DataFrame(columns=["line", "prev_node", "next_node", "prev_sku", "next_sku", "edge_type"])
+
+    # Canonical graph columns: network nodes are marca × volumen × pack × envase.
+    # SKU columns remain available only as traceability to operational orders.
+    frames["graph_prev"] = frames[_first_available(frames, ["prev_node", "prev_sku"])].astype(str)
+    frames["graph_next"] = frames[_first_available(frames, ["next_node", "next_sku"])].astype(str)
+    frames["edge_type"] = frames.get("edge_type", "desconocido")
+
+    nodes["graph_node"] = nodes[_first_available(nodes, ["node", "sku"])].astype(str)
+    if "sku" not in nodes.columns:
+        nodes["sku"] = nodes["graph_node"]
+    nodes["sku"] = nodes["sku"].astype(str)
+
+    spots["graph_prev"] = spots[_first_available(spots, ["prev_node", "prev_sku"], "prev_sku")].astype(str)
+    spots["graph_next"] = spots[_first_available(spots, ["next_node", "next_sku"], "next_sku")].astype(str)
+    if "prev_sku" not in spots.columns:
+        spots["prev_sku"] = spots["graph_prev"]
+    if "next_sku" not in spots.columns:
+        spots["next_sku"] = spots["graph_next"]
     spots["prev_sku"] = spots["prev_sku"].astype(str)
     spots["next_sku"] = spots["next_sku"].astype(str)
+    spots["edge_type"] = spots.get("edge_type", "desconocido")
     return frames, nodes, spots
 
 
@@ -134,7 +197,8 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
     df["h_tot_str"] = df["h_tot"].map(lambda v: f"{v:.1f}h")
     df["hl_str"] = df["hl"].map(lambda v: f"{v:,.0f}")
     df["oee_str"] = df["oee"].map(lambda v: f"{v*100:.0f}%")
-    df["is_spot"] = df["sku"].isin(spot_skus)
+    df["graph_node"] = df["node"].astype(str) if "node" in df.columns else df["sku"].astype(str)
+    df["is_spot"] = df["graph_node"].isin(spot_skus)
     df["line_color"] = np.where(df["is_spot"], "#8b0000", "#ffffff")
     df["line_w"] = np.where(df["is_spot"], 1.5, 0.4)
 
@@ -159,6 +223,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
         label=initial_label.tolist(),
         label_x=initial_label_x.tolist(),
         sku=df["sku"].tolist(), of=df["of"].tolist(),
+        node=df["graph_node"].tolist(),
         fecha=df["fecha_str"].tolist(), dur=df["h_tot_str"].tolist(),
         hl=df["hl_str"].tolist(), oee=df["oee_str"].tolist(),
     ))
@@ -168,7 +233,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
                        line_color="line_color", line_width="line_w",
                        source=g_src)
     p_gantt.add_tools(HoverTool(renderers=[gr], tooltips=[
-        ("SKU", "@sku"), ("OF", "@of"),
+        ("SKU", "@sku"), ("Node", "@node"), ("OF", "@of"),
         ("Start", "@fecha"), ("Duration", "@dur"),
         ("HL", "@hl"), ("OEE", "@oee"),
     ]))
@@ -185,15 +250,23 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
 
     for line in LINES:
         line_edges = frames_df[frames_df["line"] == line]
-        edge_first = (line_edges.groupby(["prev_sku", "next_sku"])["week"]
-                                .min().reset_index().rename(columns={"week": "first_week"}))
+        edge_first = (
+            line_edges.groupby(["graph_prev", "graph_next"], as_index=False)
+            .agg(
+                first_week=("week", "min"),
+                edge_type=("edge_type", lambda x: x.mode().iloc[0] if len(x.mode()) else "desconocido"),
+                count=("count", "sum") if "count" in line_edges.columns else ("week", "size"),
+            )
+        )
 
         line_nodes = nodes_df[nodes_df["line"] == line]
-        node_first = (line_nodes.groupby("sku")["week"]
+        node_first = (line_nodes.groupby("graph_node")["week"]
                                 .min().reset_index().rename(columns={"week": "first_week"}))
-        latest_deg = (line_nodes.sort_values("week").groupby("sku")["degree"]
+        latest_deg = (line_nodes.sort_values("week").groupby("graph_node")["degree"]
                                  .last().reset_index())
-        node_first = node_first.merge(latest_deg, on="sku")
+        latest_sku = (line_nodes.sort_values("week").groupby("graph_node")["sku"]
+                      .last().reset_index())
+        node_first = node_first.merge(latest_deg, on="graph_node").merge(latest_sku, on="graph_node", how="left")
         line_cls = node_class.get(line, {})
 
         pos = global_pos.get(line, {})
@@ -202,14 +275,16 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
         edge_xs, edge_ys, edge_first_w = [], [], []
         edge_color, edge_w_base, edge_alpha_base = [], [], []
         edge_pair, edge_weight_label = [], []
+        edge_type_l, edge_count_l = [], []
         for _, row in edge_first.iterrows():
-            o, d = row["prev_sku"], row["next_sku"]
+            o, d = row["graph_prev"], row["graph_next"]
             if o not in pos or d not in pos:
                 continue
             edge_xs.append([pos[o][0], pos[d][0]])
             edge_ys.append([pos[o][1], pos[d][1]])
             is_spot = (o, d) in spot_set
-            edge_color.append("#d62728" if is_spot else "#5a5a5a")
+            edge_type = row.get("edge_type", "desconocido")
+            edge_color.append("#d62728" if is_spot else EDGE_TYPE_COLOR.get(edge_type, "#5a5a5a"))
             try:
                 w_h = changeover_hours(ctx, o, d, line)
             except Exception:
@@ -220,6 +295,8 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
             edge_first_w.append(int(row["first_week"]))
             edge_pair.append(f"{o} → {d}")
             edge_weight_label.append(f"{w_h:.2f}h")
+            edge_type_l.append(edge_type)
+            edge_count_l.append(int(row.get("count", 1)))
 
         n_e = len(edge_xs)
         edge_alpha_init = [edge_alpha_base[i] if edge_first_w[i] <= initial_week else 0.0
@@ -234,15 +311,16 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
             w_base=edge_w_base, w=edge_w_init,
             first_week=edge_first_w,
             pair=edge_pair, weight=edge_weight_label,
+            edge_type=edge_type_l, count=edge_count_l,
         ))
         edge_sources.append(e_src)
 
         # ── Nodes ──
-        node_x, node_y, node_first_w, node_sku_l, node_deg_l = [], [], [], [], []
+        node_x, node_y, node_first_w, node_label_l, node_sku_l, node_deg_l = [], [], [], [], [], []
         node_color, node_alpha_base, node_size_base = [], [], []
         node_stroke, node_stroke_w = [], []
         for _, row in node_first.iterrows():
-            s = row["sku"]
+            s = row["graph_node"]
             if s not in pos:
                 continue
             node_x.append(pos[s][0])
@@ -268,7 +346,8 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
                 node_alpha_base.append(0.78)
             node_size_base.append(size)
             node_first_w.append(int(row["first_week"]))
-            node_sku_l.append(s)
+            node_label_l.append(s)
+            node_sku_l.append(str(row.get("sku", "")))
             node_deg_l.append(int(deg))
 
         n_n = len(node_x)
@@ -283,7 +362,7 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
             alpha_base=node_alpha_base, alpha=node_alpha_init,
             size_base=node_size_base, size=node_size_init,
             first_week=node_first_w,
-            sku=node_sku_l, degree=node_deg_l,
+            node=node_label_l, sku=node_sku_l, degree=node_deg_l,
         ))
         node_sources.append(n_src)
 
@@ -308,13 +387,14 @@ def build_combined_dashboard(gantt_df, frames_df, nodes_df, day_zero, total_days
                                  line_color="color", line_width="w",
                                  line_alpha="alpha", line_join="round")
         pg.add_tools(HoverTool(renderers=[edges_r], tooltips=[
-            ("Transition", "@pair"), ("Changeover", "@weight"),
+            ("Transition", "@pair"), ("Type", "@edge_type"),
+            ("Count", "@count"), ("Changeover", "@weight"),
         ]))
         nodes_r = pg.scatter("x", "y", source=n_src, size="size",
                               fill_color="color", fill_alpha="alpha",
                               line_color="stroke", line_width="stroke_w")
         pg.add_tools(HoverTool(renderers=[nodes_r], tooltips=[
-            ("SKU", "@sku"), ("Connections", "@degree"),
+            ("Node", "@node"), ("SKU ref.", "@sku"), ("Connections", "@degree"),
         ]))
         graph_figs.append(pg)
 
@@ -433,10 +513,13 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     If highlight_nodes is a set, only those nodes are shown in full color.
     """
     G = nx.DiGraph()
+    node_col = _first_available(node_df, ["graph_node", "node", "sku"])
+    prev_col = _first_available(edge_df, ["graph_prev", "prev_node", "prev_sku"])
+    next_col = _first_available(edge_df, ["graph_next", "next_node", "next_sku"])
     for _, row in node_df.iterrows():
-        G.add_node(row["sku"])
+        G.add_node(row[node_col])
     for _, row in edge_df.iterrows():
-        G.add_edge(row["prev_sku"], row["next_sku"])
+        G.add_edge(row[prev_col], row[next_col])
 
     p = figure(title=title, width=380, height=380,
                x_axis_type=None, y_axis_type=None,
@@ -468,9 +551,9 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     # Edges (normal + black spots) with weighted width
     edge_xs, edge_ys = [], []
     edge_w, edge_c, edge_a = [], [], []
-    edge_pair, edge_weight_label = [], []
+    edge_pair, edge_weight_label, edge_type_l = [], [], []
     for _, row in edge_df.iterrows():
-        o, d = row["prev_sku"], row["next_sku"]
+        o, d = row[prev_col], row[next_col]
         if o not in pos or d not in pos:
             continue
         edge_xs.append([pos[o][0], pos[d][0]])
@@ -482,7 +565,8 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             edge_a.append(0.12)
         else:
             is_bs = (o, d) in black_spots
-            edge_c.append("#d62728" if is_bs else "#444444")
+            edge_type = row.get("edge_type", "desconocido")
+            edge_c.append("#d62728" if is_bs else EDGE_TYPE_COLOR.get(edge_type, "#444444"))
             if has_weight:
                 w = float(row["weight"])
                 wt = (w - wmin) / wr
@@ -495,18 +579,20 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             edge_weight_label.append(f"{w:.2f}h")
         else:
             edge_weight_label.append("")
+        edge_type_l.append(row.get("edge_type", "desconocido"))
         edge_pair.append(f"{o} → {d}")
 
     if edge_xs:
         src_e = ColumnDataSource(dict(
             xs=edge_xs, ys=edge_ys, w=edge_w, c=edge_c, a=edge_a,
-            pair=edge_pair, weight=edge_weight_label,
+            pair=edge_pair, weight=edge_weight_label, edge_type=edge_type_l,
         ))
         r_e = p.multi_line("xs", "ys", source=src_e,
                            line_color="c", line_width="w", line_alpha="a",
                            line_join="round")
         p.add_tools(HoverTool(renderers=[r_e], tooltips=[
             ("Transition", "@pair"),
+            ("Type", "@edge_type"),
             ("Changeover", "@weight"),
         ]))
 
@@ -527,9 +613,10 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
     CAT_COLORS = {"blackspot": "#e41a1c", "critical": "#ff7f0e", "normal": "#4C78A8"}
 
     node_x, node_y, node_s, node_c, node_al, node_sc, node_sl = [], [], [], [], [], [], []
+    node_labels, sku_refs, node_degrees = [], [], []
     spot_skus = set(p for pair in black_spots for p in pair)
     for _, row in node_df.iterrows():
-        s = row["sku"]
+        s = row[node_col]
         if s not in pos:
             continue
         node_x.append(pos[s][0])
@@ -565,20 +652,387 @@ def build_bokeh_graph(line, edge_df, node_df, black_spots, *,
             else:
                 node_sc.append("white")
                 node_sl.append(1.0)
+        node_labels.append(str(s))
+        sku_refs.append(str(row.get("sku", "")))
+        node_degrees.append(int(row.get("degree", 0)))
 
     if node_x:
         src_n = ColumnDataSource(dict(
             x=node_x, y=node_y, size=node_s, color=node_c, alpha=node_al,
             stroke=node_sc, sw=node_sl,
-            sku=node_df["sku"].tolist(), degree=node_df["degree"].tolist(),
+            node=node_labels, sku=sku_refs, degree=node_degrees,
         ))
         r = p.scatter("x", "y", source=src_n, size="size",
                        fill_color="color", fill_alpha="alpha",
                        line_color="stroke", line_width="sw")
         p.add_tools(HoverTool(renderers=[r], tooltips=[
-            ("SKU", "@sku"), ("Connections", "@degree"),
+            ("Node", "@node"), ("SKU ref.", "@sku"), ("Connections", "@degree"),
         ]))
 
+    return p
+
+
+def build_optimized_sequence_graph(ctx, line: str, sequence: List[str], *, title: str = ""):
+    """Visualize the actual optimized route on a line, not the historical network.
+
+    Nodes are production orders/SKUs in sequence order. Each node carries its
+    canonical product-format graph node, and edges are the actual consecutive
+    changeovers executed by the optimal plan.
+    """
+    sequence = [sku for sku in sequence if float(ctx.volumes.get(sku, 0.0)) > 1e-9]
+    p = figure(
+        title=title or f"L{line}",
+        width=430,
+        height=360,
+        x_axis_type=None,
+        y_axis_type=None,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_scroll="wheel_zoom",
+        background_fill_color="#FAFBFC",
+        border_fill_color="white",
+    )
+    p.grid.visible = False
+    p.outline_line_color = "#dddddd"
+    p.title.text_font_size = "13pt"
+    p.title.text_font_style = "bold"
+
+    if not sequence:
+        return p
+
+    n = len(sequence)
+    # A light zig-zag keeps labels readable while preserving left-to-right order.
+    xs = list(range(n))
+    ys = [0.18 if i % 2 else -0.18 for i in range(n)]
+    if n == 1:
+        ys = [0.0]
+
+    node_values = [sku_to_graph_node(ctx, sku) for sku in sequence]
+    node_parts = [split_graph_node(node) for node in node_values]
+    formats = [parts[1] for parts in node_parts]
+    node_colors = [FMT_COLOR.get(fmt, "#4C78A8") for fmt in formats]
+    volumes = [float(ctx.volumes.get(sku, 0.0)) for sku in sequence]
+    rates = [throughput_rate(ctx, sku, line) for sku in sequence]
+    prod_hours = [vol / max(rate, 1e-6) for vol, rate in zip(volumes, rates)]
+
+    edge_rows = {
+        "xs": [], "ys": [], "color": [], "width": [], "alpha": [],
+        "pair": [], "edge_type": [], "hours": [], "from_node": [], "to_node": [],
+    }
+    for i, (prev_sku, next_sku) in enumerate(zip(sequence, sequence[1:])):
+        prev_node = node_values[i]
+        next_node = node_values[i + 1]
+        edge_type = classify_node_transition(prev_node, next_node)
+        hours = changeover_hours(ctx, prev_sku, next_sku, line)
+        color = EDGE_TYPE_COLOR.get(edge_type, "#6b7280")
+        x0, y0 = xs[i], ys[i]
+        x1, y1 = xs[i + 1], ys[i + 1]
+        edge_rows["xs"].append([x0, x1])
+        edge_rows["ys"].append([y0, y1])
+        edge_rows["color"].append(color)
+        edge_rows["width"].append(2.0 + min(5.0, hours * 1.2))
+        edge_rows["alpha"].append(0.82)
+        edge_rows["pair"].append(f"{prev_sku} → {next_sku}")
+        edge_rows["edge_type"].append(edge_type)
+        edge_rows["hours"].append(hours)
+        edge_rows["from_node"].append(prev_node)
+        edge_rows["to_node"].append(next_node)
+
+        p.add_layout(Arrow(
+            end=VeeHead(size=9, fill_color=color, line_color=color),
+            x_start=x0,
+            y_start=y0,
+            x_end=x1,
+            y_end=y1,
+            line_color=color,
+            line_alpha=0.50,
+            line_width=1,
+        ))
+
+    if edge_rows["xs"]:
+        edge_src = ColumnDataSource(edge_rows)
+        edge_r = p.multi_line(
+            "xs", "ys", source=edge_src,
+            line_color="color", line_width="width", line_alpha="alpha",
+            line_join="round",
+        )
+        p.add_tools(HoverTool(renderers=[edge_r], tooltips=[
+            ("Transition", "@pair"),
+            ("Type", "@edge_type"),
+            ("Changeover", "@hours{0.00} h"),
+            ("From node", "@from_node"),
+            ("To node", "@to_node"),
+        ]))
+
+    node_src = ColumnDataSource(dict(
+        x=xs,
+        y=ys,
+        order=list(range(1, n + 1)),
+        sku=sequence,
+        node=node_values,
+        marca=[p_[0] for p_ in node_parts],
+        format=formats,
+        pack=[p_[2] for p_ in node_parts],
+        envase=[p_[3] for p_ in node_parts],
+        color=node_colors,
+        volume=volumes,
+        prod_h=prod_hours,
+        label=[f"{i+1}. {sku}" for i, sku in enumerate(sequence)],
+    ))
+    node_r = p.scatter(
+        "x", "y", source=node_src,
+        size=18,
+        fill_color="color",
+        fill_alpha=0.94,
+        line_color="#111827",
+        line_width=1.2,
+    )
+    p.text(
+        "x", "y", text="label", source=node_src,
+        y_offset=-30,
+        text_align="center",
+        text_font_size="8pt",
+        text_color="#111827",
+    )
+    p.add_tools(HoverTool(renderers=[node_r], tooltips=[
+        ("Order", "@order"),
+        ("SKU", "@sku"),
+        ("Node", "@node"),
+        ("Marca", "@marca"),
+        ("Format", "@format"),
+        ("Pack", "@pack"),
+        ("Envase", "@envase"),
+        ("HL", "@volume{0,0}"),
+        ("Prod.", "@prod_h{0.00} h"),
+    ]))
+
+    p.x_range.range_padding = 0.08
+    p.y_range.range_padding = 0.40
+    return p
+
+
+def build_optimized_overlay_graph(
+    ctx,
+    line: str,
+    sequence: List[str],
+    edge_df: pd.DataFrame,
+    node_df: pd.DataFrame,
+    black_spots: set[tuple[str, str]],
+    *,
+    title: str = "",
+    pos: Dict | None = None,
+    node_class: Dict[str, str] | None = None,
+):
+    """Full historical line graph with the optimized route overlaid.
+
+    This keeps the same visual language as Learning 2025 while showing the
+    actual route followed by the optimizer. Optimized nodes that did not appear
+    historically in this line are added around the shell so moved SKUs remain
+    visible.
+    """
+    sequence = [sku for sku in sequence if float(ctx.volumes.get(sku, 0.0)) > 1e-9]
+    route_nodes = [sku_to_graph_node(ctx, sku) for sku in sequence]
+    route_node_set = set(route_nodes)
+    route_edges = list(zip(route_nodes, route_nodes[1:]))
+    route_edge_set = set(route_edges)
+
+    p = figure(
+        title=title or f"L{line}",
+        width=430,
+        height=430,
+        x_axis_type=None,
+        y_axis_type=None,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        active_scroll="wheel_zoom",
+        background_fill_color="#FAFBFC",
+        border_fill_color="white",
+        match_aspect=True,
+    )
+    p.grid.visible = False
+    p.outline_line_color = "#dddddd"
+    p.title.text_font_size = "13pt"
+    p.title.text_font_style = "bold"
+
+    node_col = _first_available(node_df, ["graph_node", "node", "sku"])
+    prev_col = _first_available(edge_df, ["graph_prev", "prev_node", "prev_sku"])
+    next_col = _first_available(edge_df, ["graph_next", "next_node", "next_sku"])
+
+    G = nx.DiGraph()
+    for _, row in node_df.iterrows():
+        G.add_node(str(row[node_col]))
+    for _, row in edge_df.iterrows():
+        G.add_edge(str(row[prev_col]), str(row[next_col]))
+    for node in route_nodes:
+        G.add_node(node)
+    for u, v in route_edges:
+        G.add_edge(u, v)
+
+    if G.number_of_nodes() == 0:
+        return p
+
+    pos_all = dict(pos or {})
+    missing = [n for n in G.nodes() if n not in pos_all]
+    if missing:
+        if pos_all:
+            radius = max((float(x) ** 2 + float(y) ** 2) ** 0.5 for x, y in pos_all.values())
+            radius = max(radius * 1.12, 1.15)
+        else:
+            radius = 1.15
+        for i, node in enumerate(missing):
+            angle = 2 * np.pi * (i / max(len(missing), 1)) + np.pi / 10
+            pos_all[node] = np.array([radius * np.cos(angle), radius * np.sin(angle)])
+
+    # Historical background edges: full graph, very faint, colored by edge type.
+    hist_rows = {
+        "xs": [], "ys": [], "color": [], "alpha": [], "width": [],
+        "pair": [], "edge_type": [], "count": [],
+    }
+    edge_lookup = {}
+    for _, row in edge_df.iterrows():
+        u, v = str(row[prev_col]), str(row[next_col])
+        if u not in pos_all or v not in pos_all:
+            continue
+        edge_type = row.get("edge_type", classify_node_transition(u, v))
+        is_bs = (u, v) in black_spots
+        color = "#d62728" if is_bs else EDGE_TYPE_COLOR.get(edge_type, EDGE_TYPE_COLOR["desconocido"])
+        count = int(row.get("count", 1) or 1)
+        edge_lookup[(u, v)] = row
+        hist_rows["xs"].append([pos_all[u][0], pos_all[v][0]])
+        hist_rows["ys"].append([pos_all[u][1], pos_all[v][1]])
+        hist_rows["color"].append(color)
+        hist_rows["alpha"].append(0.18 if (u, v) in route_edge_set else 0.055)
+        hist_rows["width"].append(1.2 if (u, v) in route_edge_set else 0.5)
+        hist_rows["pair"].append(f"{u} → {v}")
+        hist_rows["edge_type"].append(edge_type)
+        hist_rows["count"].append(count)
+
+    if hist_rows["xs"]:
+        hist_src = ColumnDataSource(hist_rows)
+        hist_r = p.multi_line(
+            "xs", "ys", source=hist_src,
+            line_color="color", line_alpha="alpha", line_width="width",
+            line_join="round",
+        )
+        p.add_tools(HoverTool(renderers=[hist_r], tooltips=[
+            ("Historical edge", "@pair"),
+            ("Type", "@edge_type"),
+            ("Count", "@count"),
+        ]))
+
+    # Optimized route edges: same edge-type colors, stronger and with arrows.
+    route_rows = {
+        "xs": [], "ys": [], "color": [], "width": [],
+        "pair": [], "edge_type": [], "hours": [], "from_node": [], "to_node": [],
+    }
+    for prev_sku, next_sku, u, v in zip(sequence, sequence[1:], route_nodes, route_nodes[1:]):
+        if u not in pos_all or v not in pos_all:
+            continue
+        edge_type = classify_node_transition(u, v)
+        hours = changeover_hours(ctx, prev_sku, next_sku, line)
+        color = EDGE_TYPE_COLOR.get(edge_type, EDGE_TYPE_COLOR["desconocido"])
+        x0, y0 = pos_all[u]
+        x1, y1 = pos_all[v]
+        route_rows["xs"].append([x0, x1])
+        route_rows["ys"].append([y0, y1])
+        route_rows["color"].append(color)
+        route_rows["width"].append(3.2 + min(3.8, hours * 0.8))
+        route_rows["pair"].append(f"{prev_sku} → {next_sku}")
+        route_rows["edge_type"].append(edge_type)
+        route_rows["hours"].append(hours)
+        route_rows["from_node"].append(u)
+        route_rows["to_node"].append(v)
+        p.add_layout(Arrow(
+            end=VeeHead(size=9, fill_color=color, line_color=color),
+            x_start=x0,
+            y_start=y0,
+            x_end=x1,
+            y_end=y1,
+            line_color=color,
+            line_alpha=0.62,
+            line_width=1.2,
+        ))
+
+    if route_rows["xs"]:
+        route_src = ColumnDataSource(route_rows)
+        route_r = p.multi_line(
+            "xs", "ys", source=route_src,
+            line_color="color", line_alpha=0.92, line_width="width",
+            line_join="round",
+        )
+        p.add_tools(HoverTool(renderers=[route_r], tooltips=[
+            ("Optimized transition", "@pair"),
+            ("Type", "@edge_type"),
+            ("Changeover", "@hours{0.00} h"),
+            ("From node", "@from_node"),
+            ("To node", "@to_node"),
+        ]))
+
+    # Nodes: same classification colors as Learning 2025.
+    node_class = node_class or {}
+    deg = dict(G.degree())
+    all_nodes = list(G.nodes())
+    route_order = {}
+    route_sku = {}
+    for idx, (sku, node) in enumerate(zip(sequence, route_nodes), start=1):
+        route_order.setdefault(node, idx)
+        route_sku.setdefault(node, sku)
+
+    xs, ys, colors, alphas, sizes, strokes, stroke_w = [], [], [], [], [], [], []
+    labels, nodes_l, sku_l, class_l, degree_l, order_l = [], [], [], [], [], []
+    for node in all_nodes:
+        x, y = pos_all[node]
+        cat = node_class.get(node, "normal")
+        is_route = node in route_node_set
+        is_new = node not in set(node_df[node_col].astype(str))
+        if cat == "blackspot":
+            color = "#e41a1c"
+            stroke = "#8b0000"
+        elif cat == "critical":
+            color = "#ff7f0e"
+            stroke = "#b35900"
+        else:
+            color = "#4C78A8"
+            stroke = "white"
+        xs.append(x)
+        ys.append(y)
+        colors.append(color)
+        alphas.append(0.96 if is_route else 0.18)
+        sizes.append(18 if is_route else 6)
+        strokes.append("#111827" if is_route else stroke)
+        stroke_w.append(2.2 if is_route else 0.5)
+        labels.append(str(route_order.get(node, "")))
+        nodes_l.append(node)
+        sku_l.append(route_sku.get(node, ""))
+        class_l.append("new-in-line" if is_new and is_route else cat)
+        degree_l.append(int(deg.get(node, 0)))
+        order_l.append(route_order.get(node, ""))
+
+    node_src = ColumnDataSource(dict(
+        x=xs, y=ys, color=colors, alpha=alphas, size=sizes,
+        stroke=strokes, stroke_w=stroke_w,
+        label=labels, node=nodes_l, sku=sku_l, cls=class_l,
+        degree=degree_l, order=order_l,
+    ))
+    node_r = p.scatter(
+        "x", "y", source=node_src, size="size",
+        fill_color="color", fill_alpha="alpha",
+        line_color="stroke", line_width="stroke_w",
+    )
+    p.text(
+        "x", "y", text="label", source=node_src,
+        text_align="center", text_baseline="middle",
+        text_font_size="8pt", text_font_style="bold",
+        text_color="white",
+    )
+    p.add_tools(HoverTool(renderers=[node_r], tooltips=[
+        ("Order", "@order"),
+        ("SKU", "@sku"),
+        ("Node", "@node"),
+        ("Class", "@cls"),
+        ("Connections", "@degree"),
+    ]))
+
+    p.x_range.range_padding = 0.14
+    p.y_range.range_padding = 0.14
     return p
 
 
@@ -599,7 +1053,7 @@ def gantt_figure(ctx, individual, title="", cap=None):
     cap = cap or max(HOURS_PER_WEEK.values())
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
-    fig.update_layout(barmode="stack", title=title, xaxis_title="Hours",
+    fig.update_layout(barmode="overlay", title=title, xaxis_title="Hours",
                        yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
                        height=270, margin=dict(l=50, r=15, t=35, b=20), plot_bgcolor="white")
     fig.update_xaxes(gridcolor="#eee", range=[0, cap])
@@ -638,7 +1092,7 @@ def gantt_animation(ctx, individual, title=""):
         fig.add_trace(go.Bar(x=[0], y=[ll], orientation="h", showlegend=False))
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
-    fig.update_layout(barmode="stack", title=title, xaxis_title="Hours",
+    fig.update_layout(barmode="overlay", title=title, xaxis_title="Hours",
                        yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
                        height=290, plot_bgcolor="white", margin=dict(l=50, r=15, t=35, b=20),
                        updatemenus=[{"type": "buttons", "buttons": [
@@ -699,6 +1153,16 @@ def _line_sku_volume(volume_map, line, sku, fallback=None):
     if fallback is not None:
         return float(fallback.get(sku, 0.0))
     return 0.0
+
+
+def _filter_positive_sequences(sequences, volume_map, fallback=None):
+    filtered = {}
+    for line, seq in sequences.items():
+        filtered[line] = [
+            sku for sku in seq
+            if _line_sku_volume(volume_map, line, sku, fallback) > 1e-9
+        ]
+    return filtered
 
 
 def scenario_oee(bd):
@@ -773,6 +1237,8 @@ def scenario_totals(bd):
 
 def context_for_plan_week(ctx, df_plan, df_real):
     weekly = planned_demand_from_planificado(df_plan).copy()
+    weekly["hl_total"] = pd.to_numeric(weekly["hl_total"], errors="coerce").fillna(0.0)
+    weekly = weekly[weekly["hl_total"] > 1e-9].copy()
     first_dates = df_plan.groupby("sku")["start_ts"].min().rename("first_fecha")
     weekly = weekly.merge(first_dates, on="sku", how="left")
     weekly["original_line"] = weekly["tren"].astype(str)
@@ -794,23 +1260,18 @@ def context_for_plan_week(ctx, df_plan, df_real):
     fallback_skus = set(ctx.fallback_skus)
     for sku in skus:
         fmt = sku_format.get(sku, parse_format(sku))
+        physical_lines = [line for line in LINES if fmt in PHYSICAL_FORMAT_BY_LINE[line]]
         historical = [
             line for line in LINES
             if fmt in PHYSICAL_FORMAT_BY_LINE[line] and (sku, line) in ctx.hist_pairs
         ]
-        if historical:
-            eligible[sku] = historical
-            continue
-
         planned_lines = [
             line for line in original_lines.get(sku, [])
             if fmt in PHYSICAL_FORMAT_BY_LINE.get(line, set())
         ]
-        if planned_lines:
-            eligible[sku] = planned_lines
-        else:
-            eligible[sku] = [line for line in LINES if fmt in PHYSICAL_FORMAT_BY_LINE[line]]
-        fallback_skus.add(sku)
+        eligible[sku] = physical_lines or planned_lines
+        if not historical:
+            fallback_skus.add(sku)
 
     return replace(
         ctx,
@@ -955,7 +1416,7 @@ def gantt_figure_from_sequences(ctx, sequences, volume_map, title="", cap=None, 
     for line in LINES:
         fig.add_vline(x=HOURS_PER_WEEK[line], line_dash="dash", line_color="red", opacity=0.5)
     fig.update_layout(
-        barmode="stack", title=title, xaxis_title="Hours",
+        barmode="overlay", title=title, xaxis_title="Hours",
         yaxis=dict(categoryorder="array", categoryarray=[f"L{l}" for l in LINES]),
         height=300, margin=dict(l=50, r=15, t=35, b=20), plot_bgcolor="white",
     )
@@ -1029,7 +1490,7 @@ base_bd = breakdown(ctx, base_ind)
 baseline_total = sum(base_bd[l]["total"] for l in LINES)
 frames_2025, nodes_2025, spots_2025 = get_frames()
 num_weeks = int(frames_2025["week"].max())
-spot_set = set(zip(spots_2025["prev_sku"], spots_2025["next_sku"]))
+spot_set = set(zip(spots_2025["graph_prev"], spots_2025["graph_next"]))
 spot_skus_set = set(p for pair in spot_set for p in pair)
 gantt_history = get_gantt_history()
 gantt_day_zero = pd.Timestamp(gantt_history["week_start"].min())
@@ -1051,8 +1512,8 @@ def combined_dashboard_html(initial_day):
 
 @st.cache_resource(show_spinner="Clasificando nodos por aristas negativas…")
 def get_node_classification():
-    """Classify each (line, sku) by count of adjacent black-spot (negative) edges.
-    Returns {line: {sku: 'normal'|'critical'|'blackspot'}}.
+    """Classify graph nodes by count of adjacent black-spot edges.
+    Returns {line: {node: 'normal'|'critical'|'blackspot'}}.
     Thresholds: 0 → normal, 1-2 → critical, ≥3 → blackspot."""
     from collections import defaultdict
     cls = {}
@@ -1060,11 +1521,11 @@ def get_node_classification():
         line_spots = spots_2025[spots_2025["line"].astype(str) == line]
         spot_count = defaultdict(int)
         for _, r in line_spots.iterrows():
-            spot_count[str(r["prev_sku"])] += 1
-            spot_count[str(r["next_sku"])] += 1
-        all_skus = set(nodes_2025[nodes_2025["line"] == line]["sku"].astype(str))
-        all_skus |= set(frames_2025[frames_2025["line"] == line]["prev_sku"].astype(str))
-        all_skus |= set(frames_2025[frames_2025["line"] == line]["next_sku"].astype(str))
+            spot_count[str(r["graph_prev"])] += 1
+            spot_count[str(r["graph_next"])] += 1
+        all_skus = set(nodes_2025[nodes_2025["line"] == line]["graph_node"].astype(str))
+        all_skus |= set(frames_2025[frames_2025["line"] == line]["graph_prev"].astype(str))
+        all_skus |= set(frames_2025[frames_2025["line"] == line]["graph_next"].astype(str))
         line_cls = {}
         for sku in all_skus:
             c = spot_count.get(sku, 0)
@@ -1088,7 +1549,7 @@ def get_global_positions():
         ef = frames_2025[frames_2025["line"] == line]
         G = nx.DiGraph()
         for _, row in ef.iterrows():
-            G.add_edge(row["prev_sku"], row["next_sku"])
+            G.add_edge(row["graph_prev"], row["graph_next"])
         if G.number_of_nodes() == 0:
             continue
         line_cls = cls.get(line, {})
@@ -1116,9 +1577,9 @@ if page == "Learning 2025":
     st.subheader("Generative Bayesian Complex Networks")
 
     mc1, mc2, mc3 = st.columns(3)
-    mc1.metric("Total SKUs", nodes_2025["sku"].nunique())
-    mc2.metric("Unique Transitions",
-               int(frames_2025.groupby(["line", "prev_sku", "next_sku"]).ngroups))
+    mc1.metric("Total Nodes", nodes_2025["graph_node"].nunique())
+    mc2.metric("Unique Edges",
+               int(frames_2025.groupby(["line", "graph_prev", "graph_next"]).ngroups))
     mc3.metric("2025 Orders", len(gantt_history))
 
     # Single combined dashboard: Gantt + 3 graphs sharing one slider+play (all client-side JS)
@@ -1135,6 +1596,8 @@ elif page == "Optimization 2026":
     real_ind = actual_sequences_from_production(df_real_2026)
     planner_volumes = _volumes_by_line_sku(df_plan_2026, "hl_plan")
     real_volumes = _volumes_by_line_sku(df_real_2026, "hl_real")
+    planner_ind = _filter_positive_sequences(planner_ind, planner_volumes)
+    real_ind = _filter_positive_sequences(real_ind, real_volumes)
     real_oee_lines = real_oee_by_line(df_real_2026)
     opt_ctx = context_for_plan_week(ctx, df_plan_2026, df_real_2026)
 
@@ -1171,7 +1634,7 @@ elif page == "Optimization 2026":
     # urgent_orders is read from previous rerun to be available before optimizing
     urgent_orders = st.session_state.get("_urgent_orders", [])
 
-    result_key = f"res_GA_{co_mode}_{hdi_pct}"
+    result_key = f"res_GA_{OPTIMIZER_RESULT_VERSION}_{co_mode}_{hdi_pct}"
     if run_btn or result_key not in st.session_state:
         # Apply urgent orders: extra volume + priority
         original_priority = list(ga_mod.PRIORITY_ORDERS)
@@ -1261,7 +1724,17 @@ elif page == "Optimization 2026":
     o3.metric("Optimal Global OEE", f"{opt_oee*100:.1f}%", delta=f"{oee_delta*100:+.1f} pp vs real")
     o4.metric("Optimization time", f"{result['elapsed']:.1f}s")
 
-    opt_path = {line: list(zip(opt_ind[line], opt_ind[line][1:])) for line in LINES if len(opt_ind[line]) > 1}
+    opt_path = {
+        line: [
+            (sku_to_graph_node(ai_ctx, a), sku_to_graph_node(ai_ctx, b))
+            for a, b in zip(opt_ind[line], opt_ind[line][1:])
+        ]
+        for line in LINES if len(opt_ind[line]) > 1
+    }
+    opt_nodes = {
+        line: {sku_to_graph_node(ai_ctx, sku) for sku in opt_ind.get(line, [])}
+        for line in LINES
+    }
 
     with st.expander("📦 Urgent Orders", expanded=False):
         urgent_df = st.data_editor(
@@ -1291,18 +1764,25 @@ elif page == "Optimization 2026":
             delta=f"{_oee_delta*100:+.1f} pp vs real",
         )
 
-    # 3 Bokeh graphs: full historical network with optimized path highlighted
+    # 3 Bokeh graphs: full learned graph by line + actual optimized route overlay.
+    _node_cls = get_node_classification()
     cg1, cg2, cg3 = st.columns(3)
     for idx, line in enumerate(LINES):
         with [cg1, cg2, cg3][idx]:
             ef = frames_2025[(frames_2025["line"] == line) & (frames_2025["week"] == num_weeks)].copy()
-            ef["weight"] = ef.apply(lambda r: changeover_hours(opt_ctx, r["prev_sku"], r["next_sku"], line), axis=1)
-            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)]
-            fig = build_bokeh_graph(line, ef, nf, spot_set, title=f"L{line}",
-                                    path_edges=opt_path.get(line, []),
-                                    highlight_nodes=set(opt_ind.get(line, [])),
-                                    pos=global_pos.get(line))
-            components.html(file_html(fig, CDN, ""), height=400, scrolling=False)
+            nf = nodes_2025[(nodes_2025["line"] == line) & (nodes_2025["week"] == num_weeks)].copy()
+            fig = build_optimized_overlay_graph(
+                ai_ctx,
+                line,
+                opt_ind.get(line, []),
+                ef,
+                nf,
+                spot_set,
+                title=f"L{line}",
+                pos=global_pos.get(line),
+                node_class=_node_cls.get(line, {}),
+            )
+            components.html(file_html(fig, CDN, ""), height=460, scrolling=False)
 
     gantt_cap = max(
         max(v["total"] for v in planner_bd.values()),

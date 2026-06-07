@@ -8,6 +8,8 @@ import pandas as pd
 
 from data_loaders import (
     LINES,
+    add_graph_node_columns,
+    classify_graph_edge,
     load_all_operations,
     load_diario_hl,
     weekly_demand_from_diario,
@@ -43,30 +45,51 @@ def build_2025_frames(hist_weeks: pd.DataFrame):
         current = df[df["week"] <= week]
         for line in LINES:
             line_df = current[current["line"] == line].sort_values("fecha")
-            skus = line_df["sku"].dropna().tolist()
-            for i in range(len(skus) - 1):
+            seq = line_df.dropna(subset=["node"]).copy()
+            nodes = seq["node"].tolist()
+            skus = seq["sku"].tolist()
+            attrs = seq[["node_marca", "node_volumen", "node_pack", "node_envase"]].to_dict("records")
+            for i in range(len(nodes) - 1):
+                row = {
+                    "prev_node": nodes[i], "node": nodes[i + 1],
+                    "prev_node_marca": attrs[i]["node_marca"],
+                    "prev_node_volumen": attrs[i]["node_volumen"],
+                    "prev_node_pack": attrs[i]["node_pack"],
+                    "prev_node_envase": attrs[i]["node_envase"],
+                    "node_marca": attrs[i + 1]["node_marca"],
+                    "node_volumen": attrs[i + 1]["node_volumen"],
+                    "node_pack": attrs[i + 1]["node_pack"],
+                    "node_envase": attrs[i + 1]["node_envase"],
+                }
+                edge_type = classify_graph_edge(pd.Series(row))
                 rows.append({
                     "week": wk_idx, "line": line,
+                    "prev_node": nodes[i], "next_node": nodes[i + 1],
                     "prev_sku": skus[i], "next_sku": skus[i + 1],
+                    "edge_type": edge_type,
                 })
 
     frames = pd.DataFrame(rows)
-    agg = frames.groupby(["week", "line", "prev_sku", "next_sku"]).size().reset_index(name="count")
+    agg = frames.groupby(["week", "line", "prev_node", "next_node", "edge_type"]).size().reset_index(name="count")
+    # Backward-compatible aliases for older app/notebook code. Semantics are nodes.
+    agg["prev_sku"] = agg["prev_node"]
+    agg["next_sku"] = agg["next_node"]
     agg["line"] = agg["line"].astype(str)
     agg.to_csv(CLEAN_DIR / "frames_2025.csv", index=False)
 
     node_degree = (
-        agg.groupby(["week", "line", "prev_sku"])["count"].sum()
-        .reset_index().rename(columns={"prev_sku": "sku"})
+        agg.groupby(["week", "line", "prev_node"])["count"].sum()
+        .reset_index().rename(columns={"prev_node": "node"})
     )
     node_in = (
-        agg.groupby(["week", "line", "next_sku"])["count"].sum()
-        .reset_index().rename(columns={"next_sku": "sku"})
+        agg.groupby(["week", "line", "next_node"])["count"].sum()
+        .reset_index().rename(columns={"next_node": "node"})
     )
-    nodes = pd.merge(node_degree, node_in, on=["week", "line", "sku"], how="outer").fillna(0)
+    nodes = pd.merge(node_degree, node_in, on=["week", "line", "node"], how="outer").fillna(0)
     nodes["degree"] = nodes["count_x"] + nodes["count_y"]
     nodes["line"] = nodes["line"].astype(str)
-    nodes = nodes[["week", "line", "sku", "degree"]].sort_values(["week", "line", "sku"])
+    nodes["sku"] = nodes["node"]  # backward-compatible alias; semantic value is node.
+    nodes = nodes[["week", "line", "node", "sku", "degree"]].sort_values(["week", "line", "node"])
     nodes.to_csv(CLEAN_DIR / "nodes_2025.csv", index=False)
 
     black_spots = _detect_2025_black_spots(agg)
@@ -78,7 +101,7 @@ def build_2025_frames(hist_weeks: pd.DataFrame):
 def _detect_2025_black_spots(agg: pd.DataFrame) -> pd.DataFrame:
     final = agg[agg["week"] == agg["week"].max()].copy()
     final["line"] = final["line"].astype(str)
-    stats = final.groupby(["line", "prev_sku", "next_sku"])["count"].sum().reset_index()
+    stats = final.groupby(["line", "prev_node", "next_node", "edge_type"])["count"].sum().reset_index()
     means = stats.groupby("line")["count"].mean().to_dict()
     stds = stats.groupby("line")["count"].std().to_dict()
     spots = []
@@ -87,7 +110,9 @@ def _detect_2025_black_spots(agg: pd.DataFrame) -> pd.DataFrame:
         z = (row["count"] - means.get(line, 0)) / max(stds.get(line, 1), 0.01)
         if z > 1.5:
             spots.append({
-                "line": line, "prev_sku": row["prev_sku"], "next_sku": row["next_sku"],
+                "line": line, "prev_node": row["prev_node"], "next_node": row["next_node"],
+                "prev_sku": row["prev_node"], "next_sku": row["next_node"],
+                "edge_type": row["edge_type"],
             })
     return pd.DataFrame(spots)
 
@@ -134,13 +159,21 @@ def main():
 
     changeover_rows = []
     for line in LINES:
-        mat = transitions.get(line, {}).get("changeover_h")
-        if mat is not None and not mat.empty:
-            for (prev, nxt), hours in mat.stack(dropna=True).items():
+        raw = transitions.get(line, {}).get("_raw")
+        if raw is not None and not raw.empty:
+            for _, row in raw.iterrows():
+                hours = row["changeover_h_mean"]
                 if pd.notna(hours):
                     h = float(hours) / 60.0 if float(hours) > 30 else float(hours)
                     changeover_rows.append({
-                        "line": line, "prev_sku": prev, "next_sku": nxt, "hours": round(h, 4),
+                        "line": line,
+                        "prev_node": row["prev_node"],
+                        "next_node": row["node"],
+                        "edge_type": row["edge_type"],
+                        "prev_sku": row["sku_prev"],
+                        "next_sku": row["sku"],
+                        "hours": round(h, 4),
+                        "count": int(row["count"]),
                     })
     pd.DataFrame(changeover_rows).to_csv(CLEAN_DIR / "changeovers.csv", index=False)
 
@@ -155,7 +188,7 @@ def main():
         if "sku" in df.columns and "tren" in df.columns:
             for sku, tren in df[["sku", "tren"]].dropna().itertuples(index=False):
                 hist_pairs.add((str(sku), str(tren)))
-    hist_df = pd.DataFrame([(s, l) for s, l in hist_pairs], columns=["sku", "line"])
+    hist_df = pd.DataFrame(sorted(hist_pairs), columns=["sku", "line"])
     hist_df.to_csv(CLEAN_DIR / "historical_pairs.csv", index=False)
 
     print("Computing SKU eligibility...")
@@ -176,10 +209,23 @@ def main():
     pd.DataFrame(eligible_rows).to_csv(CLEAN_DIR / "sku_eligibility.csv", index=False)
 
     print("Building historical weeks table...")
-    hist_weeks = df_oee[["of", "fecha", "tren", "sku"]].dropna(subset=["of"]).copy()
+    hist_weeks = df_oee[[
+        "of", "fecha", "tren", "sku", "marca", "envase", "tipo_envase"
+    ]].dropna(subset=["of"]).copy()
+    if "material_precio" in df_cam.columns:
+        hist_weeks = hist_weeks.merge(
+            df_cam[["of", "material_precio"]].drop_duplicates("of"),
+            on="of", how="left"
+        )
+    elif "material_precio" in df_vol.columns:
+        hist_weeks = hist_weeks.merge(
+            df_vol[["of", "material_precio"]].drop_duplicates("of"),
+            on="of", how="left"
+        )
     hist_weeks["fecha"] = pd.to_datetime(hist_weeks["fecha"], errors="coerce")
     hist_weeks = hist_weeks.dropna(subset=["fecha"])
     hist_weeks = hist_weeks.rename(columns={"tren": "line"})
+    hist_weeks = add_graph_node_columns(hist_weeks)
     if "h_tot" in df_tiem.columns:
         h_tot = df_tiem.groupby("of", as_index=False)["h_tot"].sum()
         hist_weeks = hist_weeks.merge(h_tot, on="of", how="left")

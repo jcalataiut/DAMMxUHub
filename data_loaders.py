@@ -23,6 +23,95 @@ CAN_HL_BY_FORMAT = {
 }
 
 
+def parse_node_volume(tipo_envase: object) -> str:
+    """Extract the can volume used in the graph node definition."""
+    text = str(tipo_envase or "")
+    for value in ("1/3", "1/2", "2/5"):
+        if value in text:
+            return value
+    return "UK"
+
+
+def parse_node_pack(material_precio: object) -> str:
+    """Normalize packaging into the coarse pack categories used by the graph."""
+    text = str(material_precio or "").upper()
+    if any(key in text for key in ("PACK 24", "BANDEJA24", "B24")):
+        return "P24"
+    if any(key in text for key in ("PACK 12", "P12")):
+        return "P12"
+    if any(key in text for key in ("PACK C. 6", "PACK CERRADO 6", "PACK 6", "P6")):
+        return "P6"
+    if any(key in text for key in ("RETRACTIL", "RETR")):
+        return "RETR"
+    if "PACK" in text:
+        return "PACK"
+    return "UNI"
+
+
+def build_product_node(
+    marca: object,
+    volumen: object,
+    pack: object,
+    envase: object,
+    *,
+    sep: str = "|",
+) -> str:
+    """Build the graph node: marca x volumen x pack x envase."""
+    parts = [
+        str(marca or "UK").strip() or "UK",
+        str(volumen or "UK").strip() or "UK",
+        str(pack or "UK").strip() or "UK",
+        str(envase or "UK").strip() or "UK",
+    ]
+    return sep.join(parts)
+
+
+def add_graph_node_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add node attributes and the canonical graph node to an operations table."""
+    df = df.copy()
+    if "marca" in df.columns:
+        df["node_marca"] = df["marca"].astype(str).str.strip()
+    else:
+        df["node_marca"] = "UK"
+    df["node_volumen"] = (
+        df["tipo_envase"].apply(parse_node_volume)
+        if "tipo_envase" in df.columns else "UK"
+    )
+    df["node_pack"] = (
+        df["material_precio"].apply(parse_node_pack)
+        if "material_precio" in df.columns else "UNI"
+    )
+    df["node_envase"] = (
+        df["envase"].astype(str).str.strip()
+        if "envase" in df.columns else "UK"
+    )
+    df["node"] = [
+        build_product_node(m, v, p, e)
+        for m, v, p, e in zip(
+            df["node_marca"],
+            df["node_volumen"],
+            df["node_pack"],
+            df["node_envase"],
+        )
+    ]
+    return df
+
+
+def classify_graph_edge(row: pd.Series) -> str:
+    """Classify the edge by the first node attribute that changes."""
+    if pd.isna(row.get("prev_node")) or pd.isna(row.get("node")):
+        return "inicio_semana"
+    if row.get("node_marca") != row.get("prev_node_marca"):
+        return "C_brand"
+    if row.get("node_volumen") != row.get("prev_node_volumen"):
+        return "C_vol"
+    if row.get("node_pack") != row.get("prev_node_pack"):
+        return "C_pack"
+    if row.get("node_envase") != row.get("prev_node_envase"):
+        return "C_envase"
+    return "C0_self"
+
+
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip().lower().replace(" ", "_").replace(".", "") for c in df.columns]
