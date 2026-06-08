@@ -84,8 +84,20 @@ def gof_table(sample):
                      'CvM_W2': cvm.statistic, 'CvM_p': cvm.pvalue, 'params': params})
     return sorted(rows, key=lambda r: r['AIC'])          # best = lowest AIC
 
+def select_family(rows):
+    """Select min AIC among families passing KS and CvM p > 0.05.
+
+    If none pass both diagnostics, use min AIC as a documented fallback.
+    """
+    accepted = [r for r in rows if r['KS_p'] > 0.05 and r['CvM_p'] > 0.05]
+    pool = accepted or rows
+    best = min(pool, key=lambda r: r['AIC'])
+    best['selection_rule'] = 'accepted_min_aic' if accepted else 'fallback_min_aic'
+    return best
+
+
 best_family = {}
 for g in EDGE_TYPES:
     s = h1[h1['chtype'] == g]['hours'].values
     if len(s) >= 10:
-        best_family[g] = gof_table(s)[0]                 # winner per edge type
+        best_family[g] = select_family(gof_table(s))     # winner per edge type

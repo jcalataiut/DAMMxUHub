@@ -1,0 +1,64 @@
+\babel@toc {english}{}\relax 
+\contentsline {section}{\numberline {1}Introduction and dataset}{2}{section.1}%
+\contentsline {paragraph}{Raw data.}{2}{section*.2}%
+\contentsline {paragraph}{Maintenance de-contamination.}{3}{section*.4}%
+\contentsline {paragraph}{Graph representation.}{3}{section*.5}%
+\contentsline {paragraph}{Analysis dataset.}{3}{section*.7}%
+\contentsline {section}{\numberline {2}Problem statement, objectives and hypotheses}{4}{section.2}%
+\contentsline {paragraph}{The operational problem.}{4}{section*.9}%
+\contentsline {paragraph}{Objectives.}{4}{section*.10}%
+\contentsline {paragraph}{Statistical hypotheses.}{4}{section*.11}%
+\contentsline {paragraph}{Eligibility and urgencies.}{5}{section*.12}%
+\contentsline {paragraph}{Information available.}{5}{section*.13}%
+\contentsline {section}{\numberline {3}Statistical methodology}{5}{section.3}%
+\contentsline {paragraph}{Why these two, and why together.}{5}{section*.14}%
+\contentsline {subsection}{\numberline {3.1}Method 1 --- Goodness-of-fit and Bayesian MCMC updating}{5}{subsection.3.1}%
+\contentsline {subsubsection}{\numberline {3.1.1}Temporal split}{5}{subsubsection.3.1.1}%
+\contentsline {subsubsection}{\numberline {3.1.2}Candidate duration families}{6}{subsubsection.3.1.2}%
+\contentsline {subsubsection}{\numberline {3.1.3}Selection rule: GoF filter followed by AIC}{6}{subsubsection.3.1.3}%
+\contentsline {subsubsection}{\numberline {3.1.4}Bayesian posterior on the selected family}{6}{subsubsection.3.1.4}%
+\contentsline {paragraph}{Cost summary.}{7}{section*.15}%
+\contentsline {subsubsection}{\numberline {3.1.5}Stationarity tests}{7}{subsubsection.3.1.5}%
+\contentsline {subsubsection}{\numberline {3.1.6}Empirical-Bayes per-edge priors}{7}{subsubsection.3.1.6}%
+\contentsline {subsection}{\numberline {3.2}Method 2 --- Permutation tests for ordered alternatives}{7}{subsection.3.2}%
+\contentsline {paragraph}{Omnibus equality.}{7}{section*.17}%
+\contentsline {paragraph}{Ordered alternatives.}{8}{section*.18}%
+\contentsline {paragraph}{Post-hoc.}{8}{section*.19}%
+\contentsline {section}{\numberline {4}Results of the statistical analysis}{8}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Exploratory analysis}{8}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Method 1 --- family selection, priors and stationarity}{8}{subsection.4.2}%
+\contentsline {paragraph}{Reading the fitted shapes.}{8}{section*.20}%
+\contentsline {paragraph}{Posterior updating.}{10}{section*.24}%
+\contentsline {paragraph}{Stationarity (H2).}{11}{section*.28}%
+\contentsline {subsection}{\numberline {4.3}Method 2 --- ordered differences between types and lines}{12}{subsection.4.3}%
+\contentsline {paragraph}{Edge types (H3).}{12}{section*.31}%
+\contentsline {paragraph}{Lines (H4).}{12}{section*.35}%
+\contentsline {paragraph}{Synthesis.}{13}{section*.38}%
+\contentsline {section}{\numberline {5}Optimization: methodology and results}{13}{section.5}%
+\contentsline {subsection}{\numberline {5.1}From history to cost: the directed-graph post-mortem}{14}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Estimating the model parameters $\rho _{i\ell }$ and $c^h_{\ell ij}$}{14}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Engine 1 --- exact CP-SAT integer program}{14}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Engine 2 --- behaviour-graph hours model}{15}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Engine 3 --- genetic algorithm with a Bayesian changeover cost}{15}{subsection.5.5}%
+\contentsline {paragraph}{Encoding and fitness.}{15}{section*.40}%
+\contentsline {paragraph}{Bayesian arc cost (link to Method 1).}{15}{section*.41}%
+\contentsline {paragraph}{Operators and parameters.}{16}{section*.42}%
+\contentsline {paragraph}{Convergence and penalty calibration.}{16}{section*.43}%
+\contentsline {paragraph}{Why three engines.}{16}{section*.44}%
+\contentsline {subsection}{\numberline {5.6}Optimization results}{16}{subsection.5.6}%
+\contentsline {paragraph}{Black spots.}{16}{section*.46}%
+\contentsline {paragraph}{Weekly schedule.}{17}{section*.49}%
+\contentsline {paragraph}{Plan versus reality.}{17}{section*.51}%
+\contentsline {section}{\numberline {6}Findings, interpretation and conclusions}{18}{section.6}%
+\contentsline {paragraph}{What the two methods jointly establish.}{18}{section*.54}%
+\contentsline {paragraph}{Operational consequences.}{18}{section*.55}%
+\contentsline {paragraph}{From evidence to action.}{18}{section*.56}%
+\contentsline {paragraph}{Quantified impact.}{19}{section*.58}%
+\contentsline {paragraph}{Limitations.}{19}{section*.59}%
+\contentsline {paragraph}{Future work.}{19}{section*.60}%
+\contentsline {paragraph}{Reproducibility.}{19}{section*.61}%
+\contentsline {paragraph}{Conclusion.}{19}{section*.62}%
+\contentsline {section}{\numberline {A}Appendix --- Reproducible analysis code}{21}{section.A}%
+\contentsline {subsection}{\numberline {A.1}Data preparation, graph construction and goodness of fit}{21}{subsection.A.1}%
+\contentsline {subsection}{\numberline {A.2}Bayesian selected-family MCMC updating}{23}{subsection.A.2}%
+\contentsline {subsection}{\numberline {A.3}Permutation tests for ordered alternatives}{27}{subsection.A.3}%

@@ -1,0 +1,84 @@
+\begin{thebibliography}{10}
+
+\bibitem{akaike1974}
+Hirotugu Akaike.
+\newblock A new look at the statistical model identification.
+\newblock {\em IEEE Transactions on Automatic Control}, 19(6):716--723, 1974.
+
+\bibitem{anderson1962cvm}
+T.~W. Anderson.
+\newblock On the distribution of the two-sample {Cram\'er--von Mises} criterion.
+\newblock volume~33, pages 1148--1159. 1962.
+
+\bibitem{anderson1952}
+T.~W. Anderson and D.~A. Darling.
+\newblock Asymptotic theory of certain ``goodness of fit'' criteria based on stochastic processes.
+\newblock {\em The Annals of Mathematical Statistics}, 23(2):193--212, 1952.
+
+\bibitem{gelman2013bda}
+Andrew Gelman, John~B. Carlin, Hal~S. Stern, David~B. Dunson, Aki Vehtari, and Donald~B. Rubin.
+\newblock {\em Bayesian Data Analysis}.
+\newblock CRC Press, 3rd edition, 2013.
+
+\bibitem{good2005permutation}
+Phillip~I. Good.
+\newblock {\em Permutation, Parametric, and Bootstrap Tests of Hypotheses}.
+\newblock Springer, 3rd edition, 2005.
+
+\bibitem{holland1992ga}
+John~H. Holland.
+\newblock {\em Adaptation in Natural and Artificial Systems}.
+\newblock MIT Press, 1992.
+
+\bibitem{jonckheere1954}
+A.~R. Jonckheere.
+\newblock A distribution-free k-sample test against ordered alternatives.
+\newblock {\em Biometrika}, 41(1/2):133--145, 1954.
+
+\bibitem{mannwhitney1947}
+H.~B. Mann and D.~R. Whitney.
+\newblock On a test of whether one of two random variables is stochastically larger than the other.
+\newblock {\em The Annals of Mathematical Statistics}, 18(1):50--60, 1947.
+
+\bibitem{massey1951}
+Frank~J. Massey~Jr.
+\newblock The {Kolmogorov--Smirnov} test for goodness of fit.
+\newblock {\em Journal of the American Statistical Association}, 46(253):68--78, 1951.
+
+\bibitem{mckinney2010pandas}
+Wes McKinney.
+\newblock Data structures for statistical computing in {Python}.
+\newblock {\em Proceedings of the 9th Python in Science Conference}, pages 56--61, 2010.
+
+\bibitem{miller1960mtz}
+C.~E. Miller, A.~W. Tucker, and R.~A. Zemlin.
+\newblock Integer programming formulation of traveling salesman problems.
+\newblock {\em Journal of the ACM}, 7(4):326--329, 1960.
+
+\bibitem{nakajima1988tpm}
+Seiichi Nakajima.
+\newblock {\em Introduction to {TPM}: Total Productive Maintenance}.
+\newblock Productivity Press, 1988.
+
+\bibitem{perron2023ortools}
+Laurent Perron and Vincent Furnon.
+\newblock {OR-Tools} {CP-SAT} solver.
+\newblock Google, 2023.
+\newblock \url{https://developers.google.com/optimization}.
+
+\bibitem{shingo1985smed}
+Shigeo Shingo.
+\newblock {\em A Revolution in Manufacturing: The {SMED} System}.
+\newblock Productivity Press, 1985.
+
+\bibitem{terpstra1952}
+T.~J. Terpstra.
+\newblock The asymptotic normality and consistency of {Kendall's} test against trend.
+\newblock {\em Indagationes Mathematicae}, 14:327--333, 1952.
+
+\bibitem{virtanen2020scipy}
+Pauli Virtanen et~al.
+\newblock {SciPy} 1.0: Fundamental algorithms for scientific computing in {Python}.
+\newblock {\em Nature Methods}, 17:261--272, 2020.
+
+\end{thebibliography}

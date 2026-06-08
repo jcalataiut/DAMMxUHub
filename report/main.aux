@@ -1,0 +1,194 @@
+\relax 
+\providecommand \babel@aux [2]{\global \let \babel@toc \@gobbletwo }
+\@nameuse{bbl@beforestart}
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\babel@aux{english}{}
+\citation{nakajima1988tpm}
+\citation{nakajima1988tpm}
+\citation{shingo1985smed}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction and dataset}{2}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{2}{Introduction and dataset}{section.1}{}}
+\newlabel{eq:oee}{{1}{2}{Introduction and dataset}{equation.1}{}}
+\newlabel{eq:cotime}{{2}{2}{Introduction and dataset}{equation.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raw data.}{2}{section*.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Cleaned datasets produced by the ETL and used throughout the report.}}{3}{table.caption.3}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:datasets}{{1}{3}{Cleaned datasets produced by the ETL and used throughout the report}{table.caption.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Maintenance de-contamination.}{3}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Graph representation.}{3}{section*.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Definition of graph nodes and the five changeover (edge) types.}}{3}{table.caption.6}\protected@file@percent }
+\newlabel{tab:nodes}{{2}{3}{Definition of graph nodes and the five changeover (edge) types}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Analysis dataset.}{3}{section*.7}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Global distribution of the $1{,}378$ changeover durations (left) and by edge type (right). The right skew and the heavier mean of C\_envase versus C\_pack are already visible and preview the ordering established in Section~\ref {sec:res-perm}.}}{4}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:eda}{{1}{4}{Global distribution of the $1{,}378$ changeover durations (left) and by edge type (right). The right skew and the heavier mean of C\_envase versus C\_pack are already visible and preview the ordering established in Section~\ref {sec:res-perm}}{figure.caption.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Problem statement, objectives and hypotheses}{4}{section.2}\protected@file@percent }
+\newlabel{sec:problem}{{2}{4}{Problem statement, objectives and hypotheses}{section.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{The operational problem.}{4}{section*.9}\protected@file@percent }
+\newlabel{eq:hours}{{3}{4}{The operational problem}{equation.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Objectives.}{4}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Statistical hypotheses.}{4}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Eligibility and urgencies.}{5}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Information available.}{5}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Statistical methodology}{5}{section.3}\protected@file@percent }
+\newlabel{sec:methods}{{3}{5}{Statistical methodology}{section.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Why these two, and why together.}{5}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Method 1 --- Goodness-of-fit and Bayesian MCMC updating}{5}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:m1}{{3.1}{5}{Method 1 --- Goodness-of-fit and Bayesian MCMC updating}{subsection.3.1}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.1}Temporal split}{5}{subsubsection.3.1.1}\protected@file@percent }
+\citation{akaike1974}
+\citation{massey1951}
+\citation{anderson1962cvm}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.2}Candidate duration families}{6}{subsubsection.3.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.3}Selection rule: GoF filter followed by AIC}{6}{subsubsection.3.1.3}\protected@file@percent }
+\newlabel{eq:aic}{{4}{6}{Selection rule: GoF filter followed by AIC}{equation.4}{}}
+\newlabel{eq:ks}{{5}{6}{Selection rule: GoF filter followed by AIC}{equation.5}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.4}Bayesian posterior on the selected family}{6}{subsubsection.3.1.4}\protected@file@percent }
+\newlabel{eq:posterior_mcmc_inf}{{6}{6}{Bayesian posterior on the selected family}{equation.6}{}}
+\newlabel{eq:posterior_mcmc_weak}{{7}{6}{Bayesian posterior on the selected family}{equation.7}{}}
+\citation{anderson1952}
+\citation{gelman2013bda}
+\citation{good2005permutation}
+\@writefile{toc}{\contentsline {paragraph}{Cost summary.}{7}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.5}Stationarity tests}{7}{subsubsection.3.1.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Empirical-distribution-function diagnostics used for model selection and stationarity.}}{7}{table.caption.16}\protected@file@percent }
+\newlabel{tab:edftests}{{3}{7}{Empirical-distribution-function diagnostics used for model selection and stationarity}{table.caption.16}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.1.6}Empirical-Bayes per-edge priors}{7}{subsubsection.3.1.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Method 2 --- Permutation tests for ordered alternatives}{7}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:m2}{{3.2}{7}{Method 2 --- Permutation tests for ordered alternatives}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Omnibus equality.}{7}{section*.17}\protected@file@percent }
+\citation{jonckheere1954}
+\citation{terpstra1952}
+\citation{mannwhitney1947}
+\@writefile{toc}{\contentsline {paragraph}{Ordered alternatives.}{8}{section*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Post-hoc.}{8}{section*.19}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Results of the statistical analysis}{8}{section.4}\protected@file@percent }
+\newlabel{sec:results}{{4}{8}{Results of the statistical analysis}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Exploratory analysis}{8}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:eda}{{4.1}{8}{Exploratory analysis}{subsection.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Method 1 --- family selection, priors and stationarity}{8}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Reading the fitted shapes.}{8}{section*.20}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Family selection on $H_1$. The rule is lowest AIC among families passing both KS and CvM diagnostics ($p>0.05$); C\_brand is retained by lowest-AIC fallback because no candidate passes both tests.}}{9}{table.caption.21}\protected@file@percent }
+\newlabel{tab:gof}{{4}{9}{Family selection on $H_1$. The rule is lowest AIC among families passing both KS and CvM diagnostics ($p>0.05$); C\_brand is retained by lowest-AIC fallback because no candidate passes both tests}{table.caption.21}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Family selection by edge type. Solid bars pass both KS and CvM diagnostics; hatched bars fail at least one diagnostic. The black star marks the selected family.}}{9}{figure.caption.22}\protected@file@percent }
+\newlabel{fig:familyselect}{{2}{9}{Family selection by edge type. Solid bars pass both KS and CvM diagnostics; hatched bars fail at least one diagnostic. The black star marks the selected family}{figure.caption.22}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Per-type histograms on $H_1$ with the four fitted densities (top) and Gamma QQ-plots (bottom). Points on the diagonal indicate an adequate fit; the heavier upper tail of C\_envase is apparent.}}{9}{figure.caption.23}\protected@file@percent }
+\newlabel{fig:goffit}{{3}{9}{Per-type histograms on $H_1$ with the four fitted densities (top) and Gamma QQ-plots (bottom). Points on the diagonal indicate an adequate fit; the heavier upper tail of C\_envase is apparent}{figure.caption.23}{}}
+\@writefile{toc}{\contentsline {paragraph}{Posterior updating.}{10}{section*.24}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces MCMC posterior expected duration by selected family. Values are posterior medians in hours; the informative posterior uses $H_1+H_2$, while the weak posterior uses $H_2$ only.}}{10}{table.caption.25}\protected@file@percent }
+\newlabel{tab:conv}{{5}{10}{MCMC posterior expected duration by selected family. Values are posterior medians in hours; the informative posterior uses $H_1+H_2$, while the weak posterior uses $H_2$ only}{table.caption.25}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Posterior expected duration by selected family. Blue intervals use the informative $H_1+H_2$ posterior; black intervals use only $H_2$ with a weak prior.}}{10}{figure.caption.26}\protected@file@percent }
+\newlabel{fig:mcmccosts}{{4}{10}{Posterior expected duration by selected family. Blue intervals use the informative $H_1+H_2$ posterior; black intervals use only $H_2$ with a weak prior}{figure.caption.26}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Posterior densities of the expected duration for a data-rich type (C\_brand) and a long-tailed type (C\_envase). The LogNormal posterior for C\_envase explicitly carries the risk of long label-reference changes.}}{11}{figure.caption.27}\protected@file@percent }
+\newlabel{fig:mcmcdensity}{{5}{11}{Posterior densities of the expected duration for a data-rich type (C\_brand) and a long-tailed type (C\_envase). The LogNormal posterior for C\_envase explicitly carries the risk of long label-reference changes}{figure.caption.27}{}}
+\@writefile{toc}{\contentsline {paragraph}{Stationarity (H2).}{11}{section*.28}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Stationarity ($H_1$ vs $H_2$): two-sample KS, Anderson--Darling and Cram\'er--von Mises. $p>0.05$ (non-rejection) for every type except the high-volume C\_brand.}}{11}{table.caption.29}\protected@file@percent }
+\newlabel{tab:stat}{{6}{11}{Stationarity ($H_1$ vs $H_2$): two-sample KS, Anderson--Darling and Cram\'er--von Mises. $p>0.05$ (non-rejection) for every type except the high-volume C\_brand}{table.caption.29}{}}
+\newlabel{fig:gofvalid}{{6a}{11}{$H_1\!\to \!H_2$ validation of the selected families}{figure.caption.30}{}}
+\newlabel{sub@fig:gofvalid}{{a}{11}{$H_1\!\to \!H_2$ validation of the selected families}{figure.caption.30}{}}
+\newlabel{fig:ebayes}{{6b}{11}{Per-edge empirical-Bayes Gamma priors}{figure.caption.30}{}}
+\newlabel{sub@fig:ebayes}{{b}{11}{Per-edge empirical-Bayes Gamma priors}{figure.caption.30}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Out-of-sample fit and hierarchical priors. Left: the family chosen on $H_1$ still describes $H_2$ for the stationary types. Right: distribution of the per-edge shape parameters; most edges fall back to the global prior.}}{11}{figure.caption.30}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Method 2 --- ordered differences between types and lines}{12}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:res-perm}{{4.3}{12}{Method 2 --- ordered differences between types and lines}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Edge types (H3).}{12}{section*.31}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Duration statistics and mean ranks by edge type.}}{12}{table.caption.32}\protected@file@percent }
+\newlabel{tab:typestats}{{7}{12}{Duration statistics and mean ranks by edge type}{table.caption.32}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Ordered post-hoc (permutation, Bonferroni $\alpha =0.0083$).}}{12}{table.caption.32}\protected@file@percent }
+\newlabel{tab:posthoc}{{8}{12}{Ordered post-hoc (permutation, Bonferroni $\alpha =0.0083$)}{table.caption.32}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Application A (edge types). From left: boxplots, mean ranks, omnibus null distribution of $Q$, and null distribution of the ordered statistic $T$. The observed statistics lie far in the right tail of their permutation nulls.}}{12}{figure.caption.33}\protected@file@percent }
+\newlabel{fig:perm-type}{{7}{12}{Application A (edge types). From left: boxplots, mean ranks, omnibus null distribution of $Q$, and null distribution of the ordered statistic $T$. The observed statistics lie far in the right tail of their permutation nulls}{figure.caption.33}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Ordered post-hoc for edge types. Left: matrix of one-sided permutation $p$-values for each ordered pair $i\le j$ (green $=$ significant after Bonferroni). Right: null distributions of the adjacent contrasts that define the proposed chain. The significant cells trace the path C\_pack $\to $ C\_brand $\to $ C\_envase.}}{12}{figure.caption.34}\protected@file@percent }
+\newlabel{fig:perm-posthoc}{{8}{12}{Ordered post-hoc for edge types. Left: matrix of one-sided permutation $p$-values for each ordered pair $i\le j$ (green $=$ significant after Bonferroni). Right: null distributions of the adjacent contrasts that define the proposed chain. The significant cells trace the path C\_pack $\to $ C\_brand $\to $ C\_envase}{figure.caption.34}{}}
+\@writefile{toc}{\contentsline {paragraph}{Lines (H4).}{12}{section*.35}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Duration statistics and mean ranks by line.}}{13}{table.caption.36}\protected@file@percent }
+\newlabel{tab:lines}{{9}{13}{Duration statistics and mean ranks by line}{table.caption.36}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Mann--Whitney post-hoc (Bonferroni $\alpha =0.0167$).}}{13}{table.caption.36}\protected@file@percent }
+\newlabel{tab:lines-posthoc}{{10}{13}{Mann--Whitney post-hoc (Bonferroni $\alpha =0.0167$)}{table.caption.36}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Application B (lines): boxplots by line and the Jonckheere--Terpstra null distribution with the observed $JT$ far in the right tail.}}{13}{figure.caption.37}\protected@file@percent }
+\newlabel{fig:perm-line}{{9}{13}{Application B (lines): boxplots by line and the Jonckheere--Terpstra null distribution with the observed $JT$ far in the right tail}{figure.caption.37}{}}
+\@writefile{toc}{\contentsline {paragraph}{Synthesis.}{13}{section*.38}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Summary of the four hypothesis tests and their decisions.}}{13}{table.caption.39}\protected@file@percent }
+\newlabel{tab:summary}{{11}{13}{Summary of the four hypothesis tests and their decisions}{table.caption.39}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Optimization: methodology and results}{13}{section.5}\protected@file@percent }
+\newlabel{sec:optim}{{5}{13}{Optimization: methodology and results}{section.5}{}}
+\citation{perron2023ortools}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}From history to cost: the directed-graph post-mortem}{14}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:postmortem}{{5.1}{14}{From history to cost: the directed-graph post-mortem}{subsection.5.1}{}}
+\newlabel{eq:blackspot}{{12}{14}{From history to cost: the directed-graph post-mortem}{equation.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Estimating the model parameters $\rho _{i\ell }$ and $c^h_{\ell ij}$}{14}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:params}{{5.2}{14}{Estimating the model parameters $\rho _{i\ell }$ and $c^h_{\ell ij}$}{subsection.5.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Engine 1 --- exact CP-SAT integer program}{14}{subsection.5.3}\protected@file@percent }
+\citation{miller1960mtz}
+\citation{holland1992ga}
+\newlabel{eq:cpobj}{{15}{15}{Engine 1 --- exact CP-SAT integer program}{equation.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Engine 2 --- behaviour-graph hours model}{15}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Engine 3 --- genetic algorithm with a Bayesian changeover cost}{15}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Encoding and fitness.}{15}{section*.40}\protected@file@percent }
+\newlabel{eq:fitness}{{21}{15}{Encoding and fitness}{equation.21}{}}
+\@writefile{toc}{\contentsline {paragraph}{Bayesian arc cost (link to Method 1).}{15}{section*.41}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Operators and parameters.}{16}{section*.42}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Convergence and penalty calibration.}{16}{section*.43}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Why three engines.}{16}{section*.44}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces The three optimisation engines and their trade-offs. Their agreement on the same plan validates both the cost model and the result.}}{16}{table.caption.45}\protected@file@percent }
+\newlabel{tab:engines}{{12}{16}{The three optimisation engines and their trade-offs. Their agreement on the same plan validates both the cost model and the result}{table.caption.45}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Optimization results}{16}{subsection.5.6}\protected@file@percent }
+\newlabel{sec:res-applied}{{5.6}{16}{Optimization results}{subsection.5.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Black spots.}{16}{section*.46}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Post-mortem summary by line: mean OEE, black-spot count and estimated lost output.}}{17}{table.caption.47}\protected@file@percent }
+\newlabel{tab:blackspots}{{13}{17}{Post-mortem summary by line: mean OEE, black-spot count and estimated lost output}{table.caption.47}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Post-mortem of the 2025 history: the directed transition graph and the ranked black spots that drive avoidable loss.}}{17}{figure.caption.48}\protected@file@percent }
+\newlabel{fig:postmortem}{{10}{17}{Post-mortem of the 2025 history: the directed transition graph and the ranked black spots that drive avoidable loss}{figure.caption.48}{}}
+\@writefile{toc}{\contentsline {paragraph}{Weekly schedule.}{17}{section*.49}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Optimised weekly schedule (identical across CP-SAT, graph and GA). All lines feasible; $72.95$\,h of slack recovered against the contractual capacity.}}{17}{table.caption.50}\protected@file@percent }
+\newlabel{tab:sched}{{14}{17}{Optimised weekly schedule (identical across CP-SAT, graph and GA). All lines feasible; $72.95$\,h of slack recovered against the contractual capacity}{table.caption.50}{}}
+\@writefile{toc}{\contentsline {paragraph}{Plan versus reality.}{17}{section*.51}\protected@file@percent }
+\citation{shingo1985smed}
+\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces Re-optimisation on the \emph  {realised} demand of 18--22 May 2026. Only L19 exceeds its $115$\,h cap, confirming it as the binding constraint when unplanned urgencies land.}}{18}{table.caption.52}\protected@file@percent }
+\newlabel{tab:realopt}{{15}{18}{Re-optimisation on the \emph {realised} demand of 18--22 May 2026. Only L19 exceeds its $115$\,h cap, confirming it as the binding constraint when unplanned urgencies land}{table.caption.52}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces Plan vs. realised production (week 18--22 May 2026). L17 under-delivers, L19 over-delivers as the urgency buffer.}}{18}{table.caption.53}\protected@file@percent }
+\newlabel{tab:planreal}{{16}{18}{Plan vs. realised production (week 18--22 May 2026). L17 under-delivers, L19 over-delivers as the urgency buffer}{table.caption.53}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Findings, interpretation and conclusions}{18}{section.6}\protected@file@percent }
+\newlabel{sec:findings}{{6}{18}{Findings, interpretation and conclusions}{section.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{What the two methods jointly establish.}{18}{section*.54}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Operational consequences.}{18}{section*.55}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{From evidence to action.}{18}{section*.56}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {17}{\ignorespaces Traceability from statistical evidence to operational decisions.}}{19}{table.caption.57}\protected@file@percent }
+\newlabel{tab:actions}{{17}{19}{Traceability from statistical evidence to operational decisions}{table.caption.57}{}}
+\@writefile{toc}{\contentsline {paragraph}{Quantified impact.}{19}{section*.58}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{19}{section*.59}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Future work.}{19}{section*.60}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Reproducibility.}{19}{section*.61}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Conclusion.}{19}{section*.62}\protected@file@percent }
+\bibstyle{plain}
+\bibdata{refs}
+\bibcite{akaike1974}{1}
+\bibcite{anderson1962cvm}{2}
+\bibcite{anderson1952}{3}
+\bibcite{gelman2013bda}{4}
+\bibcite{good2005permutation}{5}
+\bibcite{holland1992ga}{6}
+\bibcite{jonckheere1954}{7}
+\bibcite{mannwhitney1947}{8}
+\bibcite{massey1951}{9}
+\bibcite{mckinney2010pandas}{10}
+\bibcite{miller1960mtz}{11}
+\bibcite{nakajima1988tpm}{12}
+\bibcite{perron2023ortools}{13}
+\bibcite{shingo1985smed}{14}
+\bibcite{terpstra1952}{15}
+\bibcite{virtanen2020scipy}{16}
+\citation{mckinney2010pandas}
+\citation{virtanen2020scipy}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Appendix --- Reproducible analysis code}{21}{section.A}\protected@file@percent }
+\newlabel{sec:appendix}{{A}{21}{Appendix --- Reproducible analysis code}{section.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {18}{\ignorespaces Software-and-methods map: each statistical test and the Python function that implements it. GoF and stationarity use \texttt  {scipy.stats}; the selected-family Bayesian posterior is sampled with a custom reproducible Metropolis--Hastings routine.}}{21}{table.caption.64}\protected@file@percent }
+\newlabel{tab:software}{{18}{21}{Software-and-methods map: each statistical test and the Python function that implements it. GoF and stationarity use \texttt {scipy.stats}; the selected-family Bayesian posterior is sampled with a custom reproducible Metropolis--Hastings routine}{table.caption.64}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Data preparation, graph construction and goodness of fit}{21}{subsection.A.1}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{appendix\textunderscore code/01\textunderscore data\textunderscore and\textunderscore gof.py}{21}{lstlisting.-1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Bayesian selected-family MCMC updating}{23}{subsection.A.2}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{appendix\textunderscore code/02\textunderscore bayesian\textunderscore mcmc.py}{23}{lstlisting.-2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}Permutation tests for ordered alternatives}{27}{subsection.A.3}\protected@file@percent }
+\@writefile{lol}{\contentsline {lstlisting}{appendix\textunderscore code/03\textunderscore permutation.py}{27}{lstlisting.-3}\protected@file@percent }
+\gdef \@abspage@last{28}

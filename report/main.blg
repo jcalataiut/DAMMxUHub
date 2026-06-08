@@ -1,0 +1,50 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: main.aux
+The style file: plain.bst
+Database file #1: refs.bib
+Warning--empty booktitle in anderson1962cvm
+Warning--can't use both volume and number fields in anderson1962cvm
+Warning--empty publisher in anderson1962cvm
+You've used 16 entries,
+            2118 wiz_defined-function locations,
+            596 strings with 6055 characters,
+and the built_in function-call counts, 4865 in all, are:
+= -- 493
+> -- 173
+< -- 3
++ -- 75
+- -- 54
+* -- 310
+:= -- 807
+add.period$ -- 50
+call.type$ -- 16
+change.case$ -- 71
+chr.to.int$ -- 0
+cite$ -- 19
+duplicate$ -- 198
+empty$ -- 414
+format.name$ -- 54
+if$ -- 1020
+int.to.chr$ -- 0
+int.to.str$ -- 16
+missing$ -- 20
+newline$ -- 84
+num.names$ -- 32
+pop$ -- 83
+preamble$ -- 1
+purify$ -- 58
+quote$ -- 0
+skip$ -- 134
+stack$ -- 0
+substring$ -- 337
+swap$ -- 35
+text.length$ -- 3
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 54
+warning$ -- 3
+while$ -- 54
+width$ -- 18
+write$ -- 176
+(There were 3 warnings)

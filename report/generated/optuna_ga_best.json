@@ -1,0 +1,52 @@
+{
+  "n_trials": 20,
+  "pop_size": 60,
+  "n_gen": 100,
+  "seed": 42,
+  "best_params": {
+    "mut_prob": 0.10951583611487466,
+    "elitism": 1,
+    "tour_size": 6
+  },
+  "best_value": 265.6198382282131,
+  "baseline_total_h": 287.2774942934129,
+  "optimized_total_h": 265.6198382282131,
+  "total_saved_h": 21.657656065199774,
+  "optimized_slack_h": 74.3801617717869,
+  "schedule": {
+    "14": [
+      "TU13LTN",
+      "FD13LTNN",
+      "LC13LTNN"
+    ],
+    "17": [
+      "VI1324MM",
+      "SK13LN",
+      "ED13LP24",
+      "XI13LTN",
+      "TUP13LT",
+      "DL13LT",
+      "KE13LTNN",
+      "KE13PL12",
+      "FDT13LT",
+      "XI13P24M",
+      "VO13LTNN"
+    ],
+    "19": [
+      "EN13L24B",
+      "EX1324NB",
+      "EX12LBN",
+      "VI12LTX",
+      "DL12LT",
+      "EX12LB24",
+      "VO12LT",
+      "VI12LTW",
+      "ED12LTW",
+      "EN12B24I",
+      "FDL13LN",
+      "ID12LBN",
+      "LC12LTW",
+      "XI13L12M"
+    ]
+  }
+}

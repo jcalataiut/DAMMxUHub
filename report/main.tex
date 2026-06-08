@@ -55,10 +55,11 @@ of $1{,}378$ changeovers statistically and turn that model into the cost
 structure of a production-sequencing optimiser. Two methods from the course are
 applied in full. \emph{Method~1} (goodness-of-fit and Bayesian inference) fits
 four positive-skew parametric families by maximum likelihood per changeover
-type, selects among them with the Akaike Information Criterion using
-Kolmogorov--Smirnov and Cram\'er--von Mises diagnostics, derives a
-Gamma--Exponential conjugate posterior for the expected duration that we update
-sequentially under informative and non-informative priors, and tests
+type, compares them with the Akaike Information Criterion and
+Kolmogorov--Smirnov and Cram\'er--von Mises diagnostics, then uses a
+Gamma--Exponential conjugate posterior for the expected duration because Gamma is
+not rejected for the operational groups and gives a closed, stable update under
+informative and weak priors. It also tests
 stationarity between the two halves of the year with KS, Anderson--Darling and
 Cram\'er--von Mises two-sample statistics. \emph{Method~2} (rank-based
 permutation tests for ordered alternatives) certifies a strict ordering of
@@ -296,141 +297,157 @@ makes normal-theory tools (ANOVA, $t$-tests) inappropriate.
 
 \paragraph{Why these two, and why together.}
 The choice is dictated by the two questions the business asks. ``\emph{How long
-will this changeover take, and how sure are we?}'' is an estimation question with a
-need for an honest, updatable uncertainty --- the natural home of \emph{Bayesian}
-inference, whose posterior \emph{is} a calibrated probability statement and whose
-conjugate form lets the plant fold in each new week at negligible cost. ``\emph{Is
-type/line $A$ really worse than $B$?}'' is a testing question where we refuse to
-assume a distributional shape --- the natural home of \emph{permutation} inference,
-which is exact under exchangeability and immune to the skew that would invalidate a
-parametric $F$-test. The two methods are also mutually reinforcing: Method~1
-supplies the numeric cost the optimiser consumes, while Method~2 certifies the
-qualitative ordering that makes that cost interpretable and gives the planner
-simple rules. Using only one would leave either the magnitudes or the ranking
-unjustified.
+will this changeover take, and how sure are we?}'' is an estimation question with
+a need for uncertainty attached to the edge cost of the Bayesian complex network.
+``\emph{Is type/line $A$ really worse than $B$?}'' is a testing question where we
+refuse to assume a Gaussian shape. Method~1 supplies the probabilistic edge costs
+that the optimiser consumes; Method~2 certifies the qualitative ordering that
+makes those costs interpretable.
 
-\subsection{Method 1 --- Goodness-of-fit and Bayesian conjugate inference}\label{sec:m1}
+\subsection{Method 1 --- Goodness-of-fit and Bayesian MCMC updating}\label{sec:m1}
 
-\subsubsection{Candidate families and why}
-Changeover durations are positive and right-skewed, so we consider four classical
-positive laws whose hazard shapes cover the plausible mechanisms (a setup that
-gets harder, or easier, the longer it runs):
+\subsubsection{Temporal split}
+The statistical duration dataset is split chronologically:
+\[
+H_1=\text{January--June 2025}, \qquad
+H_2=\text{July--December 2025}.
+\]
+The first half, $H_1$, is used to choose the duration family and initialise the
+informative Bayesian model. The second half, $H_2$, is used to validate the model
+and to update the posterior. This mirrors the planning situation: the plant has
+historical evidence and wants to know how it should inform future weeks.
+
+\subsubsection{Candidate duration families}
+Changeover durations are positive and right-skewed, so we consider four positive
+families:
 \begin{align*}
 \text{Gamma}(\alpha,\theta):&\ f(x)=\tfrac{1}{\Gamma(\alpha)\theta^\alpha}x^{\alpha-1}e^{-x/\theta},
 &\text{Weibull}(k,\lambda):&\ f(x)=\tfrac{k}{\lambda}\big(\tfrac{x}{\lambda}\big)^{k-1}e^{-(x/\lambda)^k},\\
 \text{LogNormal}(\mu,\sigma):&\ f(x)=\tfrac{1}{x\sigma\sqrt{2\pi}}e^{-\frac{(\ln x-\mu)^2}{2\sigma^2}},
 &\text{InvGauss}(\mu,\lambda):&\ f(x)=\sqrt{\tfrac{\lambda}{2\pi x^3}}\,e^{-\frac{\lambda(x-\mu)^2}{2\mu^2 x}} .
 \end{align*}
-Each is fitted on $H_1$ by maximum likelihood with the location fixed at zero, so
-every family has $k=2$ free parameters and the comparison is fair.
+All families are fitted by maximum likelihood using \texttt{scipy.stats}. Since
+SciPy adds an extra location parameter \texttt{loc} to continuous distributions,
+we fix it at zero (\texttt{floc=0}). This forces the fitted distributions to
+start at zero hours, which is appropriate because changeover durations cannot be
+negative.
 
-\subsubsection{Model selection: AIC with KS and CvM diagnostics}
-We rank families by Akaike's Information Criterion \cite{akaike1974},
+\subsubsection{Selection rule: GoF filter followed by AIC}
+For each edge type $g$ and candidate family $f$, we fit the parameters
+$\hat\theta_{gf}$ on $H_1$ and compute Akaike's Information Criterion
+\cite{akaike1974},
 \begin{equation}
-\text{AIC}=-2\,\ell(\hat\theta)+2k,
+\text{AIC}_{gf}=-2\,\ell(\hat\theta_{gf})+2k,
 \label{eq:aic}
 \end{equation}
-an estimator of the expected Kullback--Leibler divergence to the truth: the first
-term rewards fit, the second penalises complexity, and the lowest AIC wins. As
-goodness-of-fit \emph{diagnostics} (not the sole decision rule) we report the
-one-sample Kolmogorov--Smirnov \cite{massey1951} and Cram\'er--von Mises
-\cite{anderson1962cvm} statistics,
+with $k=2$ free parameters. We also compute the one-sample Kolmogorov--Smirnov
+\cite{massey1951} and Cram\'er--von Mises \cite{anderson1962cvm} diagnostics,
 \begin{equation}
-D=\sup_x\big|F_n(x)-F(x)\big|,\qquad
-W^2=\!\int\!\big[F_n(x)-F(x)\big]^2\,dF(x),
+D=\sup_x\big|F_n(x)-F_{\hat\theta}(x)\big|,\qquad
+W^2=\!\int\!\big[F_n(x)-F_{\hat\theta}(x)\big]^2\,dF_{\hat\theta}(x).
 \label{eq:ks}
 \end{equation}
-where $F_n$ is the empirical CDF and $F$ the fitted one; $D$ reacts to the worst
-local gap, $W^2$ to the integrated squared gap. With large $n$ both tests reject
-\emph{any} parametric law, so we lean on AIC and the \emph{size} of $D$, not the
-$p$-value alone --- an important caveat exploited in the results.
+The selection rule is deliberately conservative:
+\[
+\mathcal A_g=\{f:\ p^{KS}_{gf}>0.05\ \text{and}\ p^{CvM}_{gf}>0.05\},
+\qquad
+f_g^\star=\arg\min_{f\in\mathcal A_g}\text{AIC}_{gf}.
+\]
+If $\mathcal A_g$ is empty, we use the lowest-AIC family as a diagnostic fallback
+and report that no family passed the GoF filter. This happens only for the
+data-rich C\_brand group, where the tests are over-powered enough to reject even
+small deviations.
 
-\subsubsection{Bayesian updating: the Gamma--Exponential conjugate model}
-For planning we want a posterior on the \emph{expected} duration that can absorb
-each new week. We use the conjugate pair: an Exponential likelihood with rate
-$\lambda$ (mean duration $1/\lambda$) and a Gamma prior on $\lambda$. With
-$n$ observations $x_1,\dots,x_n$,
+\subsubsection{Bayesian posterior on the selected family}
+The selected family is not merely descriptive: it is the duration model used for
+Bayesian updating. For edge type $g$,
+\[
+X_i\mid\theta_g \sim f_g^\star(x_i\mid\theta_g),
+\]
+where $\theta_g$ contains the two positive parameters of the selected family. We
+sample on the log-parameter scale,
+\[
+z_g=\log\theta_g,
+\]
+with a weak proper prior
+\[
+z_g\sim\mathcal N(0,5^2 I).
+\]
+The informative posterior is equivalent to first learning from $H_1$ and then
+updating with $H_2$:
 \begin{equation}
-p(\lambda)=\text{Gamma}(a_0,b_0)\propto\lambda^{a_0-1}e^{-b_0\lambda},\qquad
-p(\mathbf{x}\mid\lambda)=\lambda^{n}e^{-\lambda\sum_i x_i},
+\pi_I(z_g\mid H_1,H_2)
+\propto
+\pi_0(z_g)
+\prod_{x_i\in H_1} f_g^\star(x_i\mid z_g)
+\prod_{x_i\in H_2} f_g^\star(x_i\mid z_g).
+\label{eq:posterior_mcmc_inf}
 \end{equation}
-so by Bayes' theorem the posterior keeps the Gamma form (conjugacy),
+For comparison, the weak/no-history posterior uses the same weak prior but learns
+only from $H_2$:
 \begin{equation}
-p(\lambda\mid\mathbf{x})\;\propto\;\lambda^{(a_0+n)-1}\,
-e^{-(b_0+\sum_i x_i)\lambda}
-\;=\;\text{Gamma}\!\Big(a_0+n,\;b_0+\textstyle\sum_i x_i\Big).
-\label{eq:posterior}
+\pi_W(z_g\mid H_2)
+\propto
+\pi_0(z_g)
+\prod_{x_i\in H_2} f_g^\star(x_i\mid z_g).
+\label{eq:posterior_mcmc_weak}
 \end{equation}
-The quantity of interest is the expected duration $\mathbb{E}[X]=\mathbb{E}[1/\lambda]$.
-Since $1/\lambda$ is inverse-Gamma, its posterior mean is
-\begin{equation}
-\mathbb{E}[X\mid\mathbf{x}]=\frac{b_0+\sum_i x_i}{a_0+n-1},\qquad a_0+n>1,
-\label{eq:predmean}
-\end{equation}
-and a $95\%$ credible interval for it follows by transforming the Gamma quantiles
-of $\lambda$: if $\lambda_{0.975},\lambda_{0.025}$ are the posterior quantiles,
-the interval for $\mathbb{E}[X]$ is $[1/\lambda_{0.975},\,1/\lambda_{0.025}]$. We
-contrast two priors, updated observation-by-observation along $H_2$:
-\begin{align*}
-\textbf{informative: }&\ a_0=n_{H_1},\ b_0=\textstyle\sum_{H_1}x_i
-\quad(H_1\text{ as a pseudo-sample)};\\
-\textbf{non-informative: }&\ a_0=1,\ b_0=0\quad(p(\lambda)\propto 1).
-\end{align*}
-The informative prior injects last semester's scale; the non-informative one
-learns from $H_2$ alone. The practical question is whether they agree once enough
-$H_2$ data arrive --- the Bayesian analogue of asking whether the prior choice
-matters.
+Because Weibull, LogNormal and Inverse Gaussian do not provide the simple closed
+form available to conjugate Gamma--Exponential models, both posteriors are
+estimated with a Metropolis--Hastings MCMC sampler on $z_g$. Fixed random seeds
+make the posterior summaries reproducible.
 
-\paragraph{A worked example (C\_brand).}
-To make Eqs.~\eqref{eq:posterior}--\eqref{eq:predmean} concrete: C\_brand has
-$n_{H_1}=508$ observations summing to $\sum_{H_1}x_i=764.9$\,h, so the informative
-prior is $\lambda\sim\text{Gamma}(a_0\!=\!508,\,b_0\!=\!764.9)$ and its predictive
-mean is $b_0/(a_0-1)=764.9/507=1.509$\,h. After the first five $H_2$ changeovers
-($1.26,1.21,1.32,2.02,1.23$\,h) the posterior is
-$\text{Gamma}(513,\,771.9)$ and $\mathbb{E}[X]=771.9/512=1.508$\,h, with a $95\%$
-credible interval of $[1.383,1.645]$\,h --- the estimate is essentially unmoved
-because $508$ prior pseudo-observations dwarf five new ones. The non-informative
-prior instead starts undefined ($a_0=1$ gives no mean) and, after the same five
-points, sits at $1.41$\,h with a much wider interval $[0.60,3.20]$\,h. Both
-trajectories are shown in Fig.~\ref{fig:post}; they meet once $H_2$ is exhausted.
+\paragraph{Cost summary.}
+For every MCMC draw we transform the parameters into the expected duration
+$m(\theta_g)=\mathbb E[X\mid\theta_g]$:
+\[
+\begin{array}{ll}
+\text{Gamma:} & m=\alpha\theta,\\
+\text{Weibull:} & m=\lambda\,\Gamma(1+1/k),\\
+\text{LogNormal:} & m=\exp(\mu+\sigma^2/2),\\
+\text{InvGauss:} & m=\mu.
+\end{array}
+\]
+The operational cost reported to the optimiser is the posterior median of
+$m(\theta_g)$, with the $2.5\%$ and $97.5\%$ quantiles used as a credible
+interval. The median is preferred to the posterior mean because LogNormal and
+Inverse Gaussian posteriors can be very long-tailed when a group is sparse.
 
 \subsubsection{Stationarity tests}
-Whether the $H_1$ prior is still valid in $H_2$ is a two-sample
-distribution-equality question. We use three complementary statistics: KS
-(supremum gap), Anderson--Darling \cite{anderson1952} (which up-weights the tails,
-where long changeovers live) and Cram\'er--von Mises (uniform weight). The
-two-sample AD statistic for $K=2$ samples of sizes $n_1,n_2$ ($N=n_1+n_2$) is
-\begin{equation}
-A^2=\frac{1}{N}\sum_{k=1}^{2}\frac{1}{n_k}\sum_{j=1}^{N-1}
-\frac{\big(N M_{kj}-n_k j\big)^2}{j\,(N-j)},
-\end{equation}
-with $M_{kj}$ the count of sample-$k$ observations $\le$ the $j$-th ordered pooled
-value. Non-rejection ($p>0.05$) is evidence of a stationary process. The three
-statistics are complementary because they weight the cumulative gap differently
-(Table~\ref{tab:edftests}): reporting all three guards against a test that happens
-to be blind to the kind of departure present in the data.
+Whether the $H_1$ information is still useful in $H_2$ is a two-sample
+distribution-equality question. We test
+\[
+H_0:F_{H_1}=F_{H_2},\qquad H_A:F_{H_1}\neq F_{H_2}
+\]
+with KS, Anderson--Darling \cite{anderson1952} and Cram\'er--von Mises. These
+statistics weight the empirical CDF gap differently (Table~\ref{tab:edftests}),
+so using all three gives protection against a test that is blind to the departure
+present in the data.
 
 \begin{table}[H]\centering\small
-\begin{tabular}{@{}llll@{}}
+\begin{tabular}{@{}p{3.2cm}p{4.2cm}p{5.3cm}@{}}
 \toprule
-Test & Statistic & Sensitivity & Used for \\
+Test & Main sensitivity & Role in the analysis \\
 \midrule
-Kolmogorov--Smirnov & $\sup_x|F_n-F|$ & worst single point, centre & GoF (1-sample), stationarity \\
-Cram\'er--von Mises  & $\int(F_n-F)^2\,dF$ & whole curve, uniform weight & GoF (1-sample), stationarity \\
-Anderson--Darling   & tail-weighted $\int$ & tails (long changeovers) & stationarity (2-sample) \\
+Kolmogorov--Smirnov & largest CDF gap & one-sample GoF and $H_1$--$H_2$ stationarity \\
+Cram\'er--von Mises & integrated squared CDF gap & one-sample GoF and $H_1$--$H_2$ stationarity \\
+Anderson--Darling & tail-weighted CDF gap & stationarity of long-changeover tails \\
 \bottomrule
 \end{tabular}
-\caption{The three empirical-distribution-function tests and where each is
-sensitive. Together they cover central and tail departures.}
+\caption{Empirical-distribution-function diagnostics used for model selection
+and stationarity.}
 \label{tab:edftests}
 \end{table}
 
 \subsubsection{Empirical-Bayes per-edge priors}
-Finally, individual edges are sparse: most occur once or twice. Edges with
-$n\ge2$ observations in $H_1$ receive their own Gamma prior; the rest fall back to
-the global Gamma fit, which acts as a hierarchical regulariser. This is the
-standard partial-pooling idea \cite{gelman2013bda}: borrow strength from the
-population where the cell is thin, trust the cell where it is rich.
+Individual directed edges are sparse: many product-to-product transitions occur
+only once. The type-level MCMC posterior therefore supplies the main cost
+distribution, while edge-level information is used where available. Edges with
+$n\ge2$ observations in $H_1$ receive an edge-specific Gamma fit as a local
+Empirical-Bayes adjustment; edges with fewer observations fall back to the
+type/global cost. This is a partial-pooling strategy \cite{gelman2013bda}: trust
+the edge where the cell is rich, borrow strength from the population where it is
+thin.
 
 \subsection{Method 2 --- Permutation tests for ordered alternatives}\label{sec:m2}
 Because the response is heavily skewed and several groups are small, H3--H4 are
@@ -494,17 +511,14 @@ be dominated by the largest group. These features --- positivity, skew, imbalanc
 tests are designed to handle.
 
 \subsection{Method 1 --- family selection, priors and stationarity}
-Table~\ref{tab:gof} reports the AIC-selected family per edge type.
-\emph{Gamma is not imposed}: it wins for the two largest groups (C\_pack and
-C\_brand) but Inverse Gaussian, Weibull and LogNormal win for C\_vol, C0\_self and
-C\_envase respectively, each by a small AIC margin over Gamma (e.g.\ $\Delta$AIC of
-only $+1.9$ for C\_vol, $+0.2$ for C0\_self, $+1.4$ for C\_envase). The diagnostic
-$p$-values are large for every group \emph{except} C\_brand, whose $n=508$ makes
-even a tiny departure significant --- precisely the large-$n$ behaviour of KS/CvM
-anticipated in Section~\ref{sec:m1}; the QQ-plots in Fig.~\ref{fig:goffit}
-nonetheless show an adequate fit. The implied prior mean duration already previews
-the ordering of Section~\ref{sec:res-perm}: $1.20$\,h for C\_pack up to $2.49$\,h
-for C\_envase.
+Table~\ref{tab:gof} reports the family selected on $H_1$ using the GoF-filtered
+AIC rule of Section~\ref{sec:m1}: among families with KS and CvM $p>0.05$, choose
+the lowest AIC. \emph{Gamma is not imposed}: it wins for C\_pack, while Inverse
+Gaussian, Weibull and LogNormal win for C\_vol, C0\_self and C\_envase
+respectively. C\_brand is the only exception to the GoF filter: with
+$n_{H_1}=508$, all four families are rejected by KS/CvM, so the lowest-AIC Gamma
+fit is retained as a diagnostic fallback. Figure~\ref{fig:familyselect}
+visualises this selection rule.
 
 \paragraph{Reading the fitted shapes.}
 The winning families are physically interpretable through their hazard. C0\_self
@@ -519,24 +533,30 @@ a higher floor but a heavier tail --- which is exactly the kind of changeover SM
 programmes target.
 
 \begin{table}[H]\centering\small
-\begin{tabular}{@{}lrlrrrr@{}}
+\begin{tabular}{@{}lrlrrrl@{}}
 \toprule
-Edge type & $n_{H_1}$ & Best family & AIC & KS\,$p$ & CvM\,$p$ & $\mu_{\text{prior}}$ (h)\\
+Edge type & $n_{H_1}$ & Selected family & AIC & KS\,$p$ & CvM\,$p$ & Rule\\
 \midrule
-C\_pack   &  79 & Gamma     &  189.2 & 0.520 & 0.413 & 1.198 \\
-C\_brand  & 508 & Gamma     & 1422.7 & 0.000 & 0.000 & 1.506 \\
-C\_vol    &  15 & InvGauss  &   45.9 & 0.909 & 0.914 & 1.689 \\
-C0\_self  &  71 & Weibull   &  221.5 & 0.723 & 0.890 & 1.704 \\
-C\_envase &  55 & LogNormal &  202.2 & 0.879 & 0.903 & 2.485 \\
-\midrule
-GLOBAL    & 728 & Gamma     & 2096.5 & 0.000 & 0.001 & 1.565 \\
+C\_pack   &  79 & Gamma     &  189.2 & 0.520 & 0.413 & accepted \\
+C\_brand  & 508 & Gamma     & 1422.7 & 0.000 & 0.000 & fallback \\
+C\_vol    &  15 & InvGauss  &   45.9 & 0.909 & 0.914 & accepted \\
+C0\_self  &  71 & Weibull   &  221.5 & 0.723 & 0.890 & accepted \\
+C\_envase &  55 & LogNormal &  202.2 & 0.879 & 0.903 & accepted \\
 \bottomrule
 \end{tabular}
-\caption{Goodness-of-fit on $H_1$: family with minimum AIC per edge type, with KS
-and CvM diagnostics and the prior mean duration. The winning family is
-data-driven; Gamma dominates only the two high-volume types.}
+\caption{Family selection on $H_1$. The rule is lowest AIC among families passing
+both KS and CvM diagnostics ($p>0.05$); C\_brand is retained by lowest-AIC
+fallback because no candidate passes both tests.}
 \label{tab:gof}
 \end{table}
+
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{figures/nb07_fig10_family_selection.png}
+\caption{Family selection by edge type. Solid bars pass both KS and CvM
+diagnostics; hatched bars fail at least one diagnostic. The black star marks the
+selected family.}
+\label{fig:familyselect}
+\end{figure}
 
 \begin{figure}[H]\centering
 \includegraphics[width=\textwidth]{figures/nb07_fig02.png}
@@ -547,50 +567,49 @@ heavier upper tail of C\_envase is apparent.}
 \end{figure}
 
 \paragraph{Posterior updating.}
-Figure~\ref{fig:post} shows the conjugate update of Eq.~\eqref{eq:posterior} for
-two contrasting types. The informative posterior starts at the $H_1$ mean and
-barely moves --- its $95\%$ interval is already tight --- whereas the
-non-informative posterior starts from the first $H_2$ point and climbs towards it.
-After consuming all of $H_2$ the two agree to within a fraction of an hour
-(Table~\ref{tab:conv}): the largest gap is $-0.26$\,h ($-12\%$) for the
-medium-sized C0\_self and the smallest $-0.05$\,h ($-3\%$) for the data-rich
-C\_brand. In other words, \emph{with enough new data the prior is washed out},
-exactly as Bayesian asymptotics predict; the informative prior simply buys faster
-convergence and narrower intervals for the sparse types --- which is precisely
-where planning needs help. Figure~\ref{fig:beforeafter} contrasts the full
-posterior densities before and after seeing $H_2$.
+The Bayesian update now uses the selected duration family itself. For each edge
+type, we sample the posterior of the selected family parameters with
+Metropolis--Hastings MCMC and summarise the induced expected duration by its
+posterior median (Table~\ref{tab:conv}). The informative posterior combines $H_1$
+and $H_2$; the weak posterior learns from $H_2$ only. The comparison is most
+stable for data-rich C\_brand (only $-0.05$\,h difference), while sparse or
+long-tailed groups show why the historical prior matters: C\_vol has only six
+$H_2$ observations and its weak Inverse-Gaussian posterior has a very wide upper
+tail; C\_envase inherits the heavy right tail of the selected LogNormal family.
+Figures~\ref{fig:mcmccosts}--\ref{fig:mcmcdensity} show the resulting posterior
+costs.
 
 \begin{table}[H]\centering\small
-\begin{tabular}{@{}lrrrrrr@{}}
+\begin{tabular}{@{}llrrrrrr@{}}
 \toprule
-Edge type & $n_{H_1}$ & $n_{H_2}$ & Posterior (inf.) & Posterior (unif.) & $\Delta$ (h) & $\Delta$ (\%)\\
+Edge type & Family & $n_{H_1}$ & $n_{H_2}$ & Informative & Weak & $\Delta$ (h) & 95\% CI (inf.)\\
 \midrule
-C\_pack   &  79 & 59 & 1.399 & 1.644 & $-0.245$ & $-14.91$ \\
-C\_brand  & 508 & 467& 1.552 & 1.598 & $-0.047$ & $-2.92$  \\
-C\_vol    &  15 &  6 & 1.772 & 1.684 & $+0.088$ & $+5.20$  \\
-C0\_self  &  71 & 70 & 1.995 & 2.259 & $-0.264$ & $-11.71$ \\
-C\_envase &  55 & 48 & 2.561 & 2.669 & $-0.108$ & $-4.04$  \\
+C\_pack   & Gamma     &  79 &  59 & 1.384 & 1.653 & $-0.269$ & [1.184, 1.644]\\
+C\_brand  & Gamma     & 508 & 467 & 1.549 & 1.596 & $-0.047$ & [1.469, 1.639]\\
+C\_vol    & InvGauss  &  15 &   6 & 1.793 & 2.168 & $-0.375$ & [1.234, 3.668]\\
+C0\_self  & Weibull   &  71 &  70 & 1.999 & 2.310 & $-0.311$ & [1.687, 2.403]\\
+C\_envase & LogNormal &  55 &  48 & 3.554 & 5.320 & $-1.766$ & [2.599, 5.202]\\
 \bottomrule
 \end{tabular}
-\caption{Final posterior expected duration after consuming all of $H_2$:
-informative vs. non-informative prior. The two agree closely once data accumulate.}
+\caption{MCMC posterior expected duration by selected family. Values are
+posterior medians in hours; the informative posterior uses $H_1+H_2$, while the
+weak posterior uses $H_2$ only.}
 \label{tab:conv}
 \end{table}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/nb07_fig03.png}
-\caption{Sequential Gamma--Exponential posterior mean (with $95\%$ band) along
-$H_2$ for C\_brand and C\_envase: informative prior (colour) vs. non-informative
-(black). They converge as observations accrue.}
-\label{fig:post}
+\includegraphics[width=\textwidth]{figures/nb07_fig11_mcmc_costs.png}
+\caption{Posterior expected duration by selected family. Blue intervals use the
+informative $H_1+H_2$ posterior; black intervals use only $H_2$ with a weak prior.}
+\label{fig:mcmccosts}
 \end{figure}
 
 \begin{figure}[H]\centering
-\includegraphics[width=0.82\textwidth]{figures/nb07_fig04.png}
-\caption{Prior-to-posterior densities of the expected duration before and after
-$H_2$, under both priors. The data dominate: the two posteriors concentrate on
-almost the same value.}
-\label{fig:beforeafter}
+\includegraphics[width=0.9\textwidth]{figures/nb07_fig12_mcmc_density_examples.png}
+\caption{Posterior densities of the expected duration for a data-rich type
+(C\_brand) and a long-tailed type (C\_envase). The LogNormal posterior for
+C\_envase explicitly carries the risk of long label-reference changes.}
+\label{fig:mcmcdensity}
 \end{figure}
 
 \paragraph{Stationarity (H2).}
@@ -825,7 +844,7 @@ to the plant mean, with a hard floor of $20$\,HL/h. The estimated medians are
 $82.4$, $144.2$ and $140.5$\,HL/h for L14, L17 and L19 --- L14 is intrinsically the
 slowest line, compounding the changeover penalty established in
 Section~\ref{sec:res-perm}. The \textbf{changeover hours} $c^h_{\ell ij}$ are the
-posterior summaries of the Gamma-conjugate model (Section~\ref{sec:m1}), looked up
+posterior summaries of the selected-family Bayesian model (Section~\ref{sec:m1}), looked up
 on the arc $\text{node}(i)\!\to\!\text{node}(j)$; a missing arc falls back to the
 line-mean changeover, inflated by a factor $2.5$ when the formats differ, and the
 result is clipped to $[0,12]$\,h to bound simulator pathologies.
@@ -886,14 +905,13 @@ under the hard cap rather than discontinuously rejected.
 
 \paragraph{Bayesian arc cost (link to Method 1).}
 The changeover hours $c^h_{\ell ij}$ used inside the simulator are \emph{not} raw
-means: they are posterior summaries of the same Gamma-conjugate model of
-Section~\ref{sec:m1}. For each arc the line carries a prior
-$\lambda\sim\text{Gamma}(a_0,b_0)$ and the observed samples update it to
-$\text{Gamma}(a_0+n,\,b_0+\sum x)$, exactly Eq.~\eqref{eq:posterior}; the cost can
-be read off as the posterior-predictive mean $b/(a-1)$ (Eq.~\eqref{eq:predmean})
-or as a conservative upper edge of the $1\!-\!\epsilon$ highest-density interval
-of the posterior duration. The statistical model is thus not a side-analysis: it
-\emph{is} the optimiser's cost oracle.
+means: they are posterior summaries of the selected-family Bayesian model of
+Section~\ref{sec:m1}. For each changeover type, the family selected on $H_1$ is
+used as the likelihood and its parameters are updated by MCMC with the available
+observations. The operational cost is the posterior median expected duration,
+with posterior quantiles available when a risk-adjusted cost is preferred. The
+statistical model is thus not a side-analysis: it \emph{is} the optimiser's cost
+oracle.
 
 \paragraph{Operators and parameters.}
 Generation~0 is built by a smart initialiser that places every SKU on an eligible
@@ -1070,9 +1088,9 @@ L19 over-delivers as the urgency buffer.}
 % =====================================================================
 \paragraph{What the two methods jointly establish.}
 Method~1 gives a \emph{trustworthy, self-updating cost per changeover}: a per-type
-parametric law (not forced to Gamma), a conjugate prior whose informative and
-non-informative versions agree once data accrue (Table~\ref{tab:conv}), and a
-stationarity check that licenses re-using the 2025 prior in 2026
+parametric law (not forced to Gamma), selected-family MCMC posteriors under
+informative and weak priors (Table~\ref{tab:conv}), and a stationarity check that
+licenses re-using the 2025 prior in 2026
 (Table~\ref{tab:stat}). Method~2 turns that cost into \emph{actionable structure}:
 a statistically certified ordering of changeover types and of lines
 (Table~\ref{tab:summary}). The two agree on the central, counter-intuitive message
@@ -1108,7 +1126,7 @@ C\_envase is the costliest type ($p<0.01$) & \ref{sec:res-perm} & batch SKUs by 
 C\_brand $\approx$ C0\_self (plateau) & \ref{sec:res-perm} & treat brand changes and lot restarts as equal-cost \\
 L14 slowest ($p<10^{-4}$) & \ref{sec:res-perm} & keep label-switching sequences off L14 \\
 Process stationary (4/5 types) & \ref{sec:results} & reuse 2025 prior for 2026 planning \\
-Informative $\approx$ uninformative posterior & \ref{sec:results} & cost is data-driven, not prior-driven; trust it \\
+Informative vs. weak posterior comparison & \ref{sec:results} & historical prior stabilises sparse/long-tailed types \\
 21 black spots, $\approx10{,}251$\,hL & \ref{sec:res-applied} & ranked SMED worklist \\
 $72.95$\,h weekly slack & \ref{sec:res-applied} & head-room budget for urgencies \\
 L19 binding under real demand & \ref{sec:res-applied} & route urgencies away from L19 when possible \\
@@ -1145,9 +1163,10 @@ guarantees realism at the cost of never proposing a genuinely new SKU--line pair
 Three extensions follow naturally. First, the per-edge empirical-Bayes priors could
 be replaced by a fully \emph{hierarchical} model in which edge-, type- and
 line-level effects are estimated jointly, sharpening the sparse arcs without the
-hard $n\ge2$ cut-off. Second, the conjugate cost could be pushed into the CP-SAT
-objective as a risk-adjusted quantile (e.g.\ the posterior $90\%$ duration) so the
-exact optimiser becomes robust, not just expected-value optimal. Third, the
+hard $n\ge2$ cut-off. Second, the selected-family posterior cost could be pushed
+into the CP-SAT objective as a risk-adjusted quantile (e.g.\ the posterior
+$90\%$ duration) so the exact optimiser becomes robust, not just median-cost
+optimal. Third, the
 stationarity test could be run online as a change-point monitor, raising an alert
 when a line's changeover distribution drifts --- closing the loop from descriptive
 post-mortem to live process control.
@@ -1162,15 +1181,15 @@ nulls and the GA run deterministic, so the reported $p$-values and the $267.05$\
 plan reproduce exactly.
 
 \paragraph{Conclusion.}
-A disciplined statistical treatment of an industrial log --- AIC-based family
-selection, Gamma--Exponential conjugate updating with an explicit stationarity
-test, and distribution-free permutation tests for ordered alternatives ---
+A disciplined statistical treatment of an industrial log --- GoF-filtered
+AIC-based family selection, selected-family Bayesian MCMC updating with an
+explicit stationarity test, and distribution-free permutation tests for ordered alternatives ---
 produced a validated, interpretable cost structure that both explains historical
 losses and drives a feasible production schedule. Crucially, the statistical model
-is not decorative: its conjugate posterior is the optimiser's cost oracle, and the
+is not decorative: its posterior edge cost is the optimiser's cost oracle, and the
 ordering it certifies is the rule the optimiser follows. The framework is
 reproducible and self-improving: each new production week is one more observation
-for the posterior of Eq.~\eqref{eq:posterior}, so the cost model --- and the
+for the posterior of Eqs.~\eqref{eq:posterior_mcmc_inf}--\eqref{eq:posterior_mcmc_weak}, so the cost model --- and the
 schedules it produces --- sharpen automatically as DAMM keeps operating.
 
 % =====================================================================
@@ -1191,7 +1210,7 @@ with \texttt{numpy}, \texttt{pandas} \cite{mckinney2010pandas} and \texttt{scipy
 \cite{virtanen2020scipy} (SciPy 1.16, pandas 2.3).
 
 \begin{table}[H]\centering\small\setlength{\tabcolsep}{4pt}
-\begin{tabular}{@{}lll@{}}
+\begin{tabular}{@{}p{3.4cm}p{5.9cm}p{4.8cm}@{}}
 \toprule
 Procedure & Python function & Notes \\
 \midrule
@@ -1203,27 +1222,31 @@ Kolmogorov--Smirnov (1-sample) & \texttt{scipy.stats.kstest} & GoF vs.\ fitted C
 Cram\'er--von Mises (1-sample)  & \texttt{scipy.stats.cramervonmises} & uniform-weight GoF\\
 KS (2-sample, $H_1$ vs $H_2$)  & \texttt{scipy.stats.ks\_2samp} & stationarity\\
 Anderson--Darling (k-sample)   & \texttt{scipy.stats.anderson\_ksamp} & tail-weighted\\
-Cram\'er--von Mises (2-sample) & \texttt{scipy.stats.cramervonmises\_2samp} & stationarity\\
-Conjugate update + 95\% CI     & custom \texttt{sequential\_bayes} & \texttt{gamma.ppf} quantiles\\
+Cram\'er--von Mises (2-sample) & \texttt{scipy.stats.} & stationarity\\
+                    & \texttt{cramervonmises\_2samp} & \\
+Selected-family posterior      & custom \texttt{mh\_sampler} & Metropolis--Hastings on log-parameters\\
+Posterior cost summary         & custom \texttt{duration\_mean} & median and 95\% credible interval\\
 \midrule
 \multicolumn{3}{l}{\textit{Method 2 --- permutation tests}}\\
 Joint ranks            & \texttt{scipy.stats.rankdata} & mean within-group ranks\\
-Label-permutation null & \texttt{numpy.random.Generator.permutation} & $10{,}000$ resamples\\
+Label-permutation null & \texttt{numpy.random.Generator.} & $10{,}000$ resamples\\
+                    & \texttt{permutation} & \\
 Line post-hoc          & \texttt{scipy.stats.mannwhitneyu} & one-sided, Bonferroni\\
 Pair enumeration       & \texttt{itertools.combinations} & $\binom{4}{2}$ ordered pairs\\
 \bottomrule
 \end{tabular}
 \caption{Software-and-methods map: each statistical test and the Python function
-that implements it. The KS, AD and CvM tests and the Bayesian conjugate update all
-rely on \texttt{scipy.stats}.}
+that implements it. GoF and stationarity use \texttt{scipy.stats}; the
+selected-family Bayesian posterior is sampled with a custom reproducible
+Metropolis--Hastings routine.}
 \label{tab:software}
 \end{table}
 
 \subsection{Data preparation, graph construction and goodness of fit}
 \lstinputlisting[style=py]{appendix_code/01_data_and_gof.py}
 
-\subsection{Bayesian conjugate updating and stationarity tests}
-\lstinputlisting[style=py]{appendix_code/02_bayesian.py}
+\subsection{Bayesian selected-family MCMC updating}
+\lstinputlisting[style=py]{appendix_code/02_bayesian_mcmc.py}
 
 \subsection{Permutation tests for ordered alternatives}
 \lstinputlisting[style=py]{appendix_code/03_permutation.py}
